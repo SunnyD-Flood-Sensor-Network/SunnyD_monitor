@@ -16,24 +16,15 @@ RUN apt-get update && \
     apt-get upgrade -y && \
     apt-get clean
 
-# RUN cron start
-
 # install renv & restore packages
-RUN install2.r lubridate dplyr DBI RPostgres dbx pool dbplyr foreach readr
+RUN install2.r dplyr dbplyr lubridate RPostgres DBI foreach dbx readr pool httr later
 
 RUN groupadd -r monitor && useradd --no-log-init -r -g monitor monitor
 
+ADD monitor.R /monitor.R
+
 EXPOSE 5432
 
-# copy folder which contains cronfile, RScript and Big Query auth JSON
-ADD monitor.R /home/monitor.R
-
-# ADD cron_start.R /cron_start.R
-# ADD postgres_keys.R /postgres_keys.R
-ADD atm_pressure.csv /home/atm_pressure.csv
-
-
-WORKDIR /home
 USER monitor
 
 CMD Rscript monitor.R
