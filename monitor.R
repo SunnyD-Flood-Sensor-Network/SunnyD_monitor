@@ -13,8 +13,6 @@ library(later)
 
 # Source env variables if working on desktop
 # source("C:/Users/Adam Gold/Desktop/postgres_keys.R")
-# source("C:/Users/Adam Gold/Desktop/noaa_api_token.R")
-# source("postgres_keys.R")
 
 # Connect to database
 con <- dbPool(
@@ -154,7 +152,7 @@ monitor_function <- function(debug = T) {
         cat("- New raw data detected for:", selected_place_name, "\n")
         cat("-",pre_interpolated_data_filtered %>% nrow(),"new rows", "\n")
         cat("- Date duration is",round(new_data_date_duration,digits = 2),"days", "\n")
-        cat("-",(pre_interpolated_data_filtered %>% nrow())-(interpolated_data_filtered %>% nrow()),"new observations filtered out b/c not within atm pressure range","\n")
+        cat("-",(pre_interpolated_data_filtered %>% nrow())-(interpolated_data_filtered %>% nrow()),"new observation(s) filtered out b/c not within atm pressure date range","\n")
       }
       
       processing_data <- interpolated_data_filtered %>%
@@ -188,7 +186,8 @@ monitor_function <- function(debug = T) {
         mutate(diff_lag = sensor_water_level - lag(sensor_water_level),
                time_lag = time_length(date - lag(date), unit = "minute"),
                diff_per_time_lag = diff_lag/time_lag,
-               qa_qc_flag = ifelse((diff_per_time_lag >= abs(.1)) ,T,F)) %>% 
+               qa_qc_flag = ifelse(is.na(diff_per_time_lag), F, ifelse((diff_per_time_lag >= abs(.1)) , T, F))
+               ) %>% 
         filter(tag == "new_data") %>% 
         dplyr::select(-c(tag,diff_lag, time_lag, diff_per_time_lag))
       
@@ -205,7 +204,9 @@ monitor_function <- function(debug = T) {
     
     dbx::dbxUpdate(conn = con,
                    table="sensor_data",
-                   records = new_data %>% mutate(processed = T),
+                   records = new_data %>% 
+                     semi_join(interpolated_data, by = c("place","sensor_ID","date")) %>% 
+                     mutate(processed = T),
                    where_cols = c("place", "sensor_ID", "date")
                    )
     
@@ -227,75 +228,3 @@ while(run ==T){
   
   Sys.sleep((60*6) - delay)
 }
-
-
-#---------------- Wunderground web scraping ----------------------
-# cb_weather <- xml2::read_html("https://www.wunderground.com/weather/us/nc/carolina-beach")
-# 
-# timestamp <- cb_weather %>% 
-#   # html_node(".timestamp") %>%
-#   html_node(".timestamp :nth-child(2)") %>%
-#   # html_node(".wu-unit-pressure .wu-value-to") %>%
-#   html_text() %>%
-#   stringr::str_split(.,pattern = " on ") %>% 
-#   unlist()
-# 
-# timestamp[1] %>% lubridate::hms()
-# 
-# wu_pressure <- cb_weather %>% 
-#   # html_node(".timestamp") %>%
-#   # html_node(".timestamp :nth-child(2)") %>%
-#   html_node(".wu-unit-pressure .wu-value-to") %>%
-#   html_text() %>%
-#   as.numeric() 
-# 
-# round(wu_pressure * 33.8639)
-# 
-# tictoc::toc()
-
-#------------ Carolina Beach openweathermap --------------------
-# owm_city_codes <- tibble::tibble("location" = c("Carolina Beach, North Carolina"),
-# "owm_code" = c(4459261))
-
-# owm_request <- httr::GET(url="https://api.openweathermap.org/data/2.5/weather",
-#                          query=list(
-#                            id = 4459261,
-#                            appid= APP_ID))
-# 
-# owm_latest_atm_pressure <- tibble::tibble(location = "Carolina Beach, North Carolina",
-#                                           date = lubridate::floor_date(Sys.time(), "1 minutes"),
-#                                           pressure_mb = jsonlite::fromJSON(rawToChar(owm_request$content))$main$pressure,
-#                                           notes = "owm.org")
-# if(atm_in_db$date[atm_in_db$location == owm_latest_atm_pressure$location] < owm_latest_atm_pressure$date){
-#   
-#   DBI::dbAppendTable(conn = con,
-#                      name = "atm_pressure",
-#                      value = owm_latest_atm_pressure)
-# }
-
-#------------------ nws atm ---------------------------------
-# latest_atm <- foreach(i = 1:nrow(nws_stationIDs), .combine = "bind_rows") %do% {
-#   nws_request <- httr::GET(url = paste0("https://api.weather.gov/stations/",nws_stationIDs$stationID[i],"/observations/latest?require_qc=true"))
-#   nws_request_parsed <- jsonlite::fromJSON(rawToChar(nws_request$content))
-#   
-#   latest_atm_pressure <- tibble::tibble("location" = nws_stationIDs$location[i],
-#                                         "nws_code" = nws_request_parsed$properties$station,
-#                                         "date" = lubridate::ymd_hms(nws_request_parsed$properties$timestamp),
-#                                         "pressure_pa" = nws_request_parsed$properties$barometricPressure$value,
-#                                         "pressure_mb" = pressure_pa/100)
-#   latest_atm_pressure
-# }
-# 
-# atm_in_db <- atm_pressure %>%
-#   group_by(location) %>%
-#   filter(date == max(date, na.rm = T)) %>% 
-#   collect()
-# 
-# foreach(i = 1:nrow(latest_atm), .combine = "bind_rows") %do% {
-#   if(atm_in_db$date[atm_in_db$location == latest_atm$location[i]] < latest_atm$date[i]){
-#     
-#     DBI::dbAppendTable(conn = con,
-#                        name = "atm_pressure",
-#                        value = latest_atm[i,])
-#   }
-# }
