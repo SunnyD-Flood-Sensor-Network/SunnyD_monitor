@@ -24,10 +24,9 @@ con <- dbPool(
   user = Sys.getenv("POSTGRESQL_USER")
 )
 
-# download the sensor locations so we can use it easier
+# Connect to sensor location table
 sensor_locations <- con %>%
-  tbl("sensor_locations") %>%
-  collect() 
+  tbl("sensor_locations") 
 
 # These are just connections for reading/writing
 raw_data <- con %>%
@@ -156,7 +155,7 @@ monitor_function <- function(debug = T) {
       }
       
       processing_data <- interpolated_data_filtered %>%
-        left_join(sensor_locations, by = c("place", "sensor_ID")) %>% 
+        left_join(sensor_locations %>% collect(), by = c("place", "sensor_ID")) %>% 
         transmute(
           place = place,
           sensor_ID = sensor_ID,
@@ -199,7 +198,7 @@ monitor_function <- function(debug = T) {
       table = "sensor_data_processed",
       records = interpolated_data,
       where_cols = c("place", "sensor_ID", "date"),
-      skip_existing = T
+      skip_existing = F
     )
     
     dbx::dbxUpdate(conn = con,
