@@ -464,7 +464,7 @@ while(run ==T){
   monitor_function(debug = T)
   
   # Extract flood events and write to Google Sheets
-  document_flood_events(processed_data_db = processed_data_db = processed_data)
+  document_flood_events(processed_data_db = processed_data)
   
   # Wait to make the delay 6 minutes
   delay <- difftime(Sys.time(),start_time, units = "secs")
