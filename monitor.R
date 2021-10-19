@@ -444,6 +444,7 @@ monitor_function <- function(debug = T) {
 
 # Run infinite loop that updates atm data and processes it
 run = T
+flood_tracker = 0
 
 while(run ==T){
   start_time <- Sys.time()
@@ -452,8 +453,16 @@ while(run ==T){
   # calculate water level and write data
   monitor_function(debug = T)
   
-  # Extract flood events and write to Google Sheets
-  document_flood_events(processed_data_db = processed_data)
+  if(flood_tracker == 10){
+    flood_tracker <- 0
+  }
+  
+  if(flood_tracker == 0){
+    # Extract flood events and write to Google Sheets
+    document_flood_events(processed_data_db = processed_data)
+  }
+  
+  flood_tracker <- flood_tracker + 1
   
   # Wait to make the delay 6 minutes
   delay <- difftime(Sys.time(),start_time, units = "secs")
