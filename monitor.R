@@ -12,6 +12,7 @@ library(httr)
 library(later)
 library(googledrive)
 library(googlesheets4)
+library(tidyr)
 
 # Source env variables if working on desktop
 # source("/Users/adam/Documents/SunnyD/sunnyday_postgres_keys.R")
@@ -110,25 +111,13 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
              change_pt = ifelse(!is.na(deriv), ifelse(deriv != 0, T, F), F)) %>% 
       filter(deriv < 0.1)
     
-    # smoothed_min_wl <- tibble("date" = min_wl %>% filter(change_pt == T) %>% pull(date),
-    #                           # "smoothed_min_wl" = smooth.spline(min_wl %>% filter(change_pt == T) %>% pull(min_wl), spar = 0.8)$y
-    #                           
-    #                           # "smoothed_min_wl" = rollmedian(min_wl %>% filter(change_pt == T) %>% pull(min_wl), k = 11, fill = NA)
-    #                           # "smoothed_min_wl" = lowess(min_wl %>% filter(change_pt == T) %>% pull(min_wl)~min_wl %>% filter(change_pt == T) %>% pull(date) %>% as.numeric())$y
-    #                           "smoothed_min_wl" = loess(min_wl~as.numeric(date), data = min_wl %>% filter(change_pt == T), span = 0.6)$fitted
-    # )
-                              
     smoothed_min_wl <- tibble("date" = min_wl %>% filter(change_pt == T) %>% pull(date),
-                              # "smoothed_min_wl" = smooth.spline(min_wl %>% filter(change_pt == T) %>% pull(min_wl), spar = 0.8)$y
-                              
-                              # "smoothed_min_wl" = rollmedian(min_wl %>% filter(change_pt == T) %>% pull(min_wl), k = 20, fill = NA)
-                              # "smoothed_min_wl" = lowess(min_wl %>% filter(change_pt == T) %>% pull(min_wl)~min_wl %>% filter(change_pt == T) %>% pull(date) %>% as.numeric())$y
                               "smoothed_min_wl" = loess(min_wl~as.numeric(date), data = min_wl %>% filter(change_pt == T))$fitted
     )
     
     smoothed_wl_df <- min_wl %>%
       left_join(smoothed_min_wl, by = "date") %>%
-      fill(smoothed_min_wl,.direction = "downup") %>%
+      tidyr::fill(smoothed_min_wl,.direction = "downup") %>%
       dplyr::select(-c(deriv, change_pt)) %>% 
       filter(date >= min_date_x_shorter)
     
