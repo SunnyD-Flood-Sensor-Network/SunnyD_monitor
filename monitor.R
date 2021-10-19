@@ -134,8 +134,6 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
     
   }
   
-  smoothed_wl_df %>% ggplot()+geom_line(aes(x=date, y = min_wl))+geom_line(aes(x=date, y=smoothed_min_wl),color="blue")
-  
   adjusted_df <- db_df_collected %>% 
     left_join(aggregate_smooth_wl, by = c("sensor_ID","date")) %>% 
     mutate(baseline_min_wl = sensor_elevation - road_elevation,
@@ -147,7 +145,6 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
   return(adjusted_df)
 }
   
-adjusted_df %>% ggplot()+geom_line(aes(x=date,y=road_water_level))+geom_line(aes(x=date, y = smoothed_min_wl), color="blue")+geom_line(aes(x=date, y = road_water_level_adj), color="red")+geom_hline(aes(yintercept=baseline_min_wl), color="green")
 
 flood_counter <- function(dates, start_number = 0, lag_hrs = 8){
   
