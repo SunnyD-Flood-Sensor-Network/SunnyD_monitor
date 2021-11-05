@@ -252,10 +252,10 @@ document_flood_events <- function(time = Sys.time(), processed_data_db){
     # 
     # twitteR::deleteStatus(latest_status)
     
-    rtweet::get_token()
-    
-    rtweet::post_tweet(status = paste("⚠️ TEST FLOOD ALERT. NOT ACTUAL FLOOD EVENT ⚠️ \n \nLikely road flooding in",location$place, "(sensor", location$sensor_ID, "). \n \nVisit go.unc.edu/flood-data to view live images and water level data.", sep=" "),
-                       )
+    # rtweet::get_token()
+    # 
+    # rtweet::post_tweet(status = paste("⚠️ TEST FLOOD ALERT. NOT ACTUAL FLOOD EVENT ⚠️ \n \nLikely road flooding in",location$place, "(sensor", location$sensor_ID, "). \n \nVisit go.unc.edu/flood-data to view live images and water level data.", sep=" "),
+    #                    )
     
     ## lookup status_id
     # my_timeline <- get_my_timeline()
