@@ -215,7 +215,7 @@ document_flood_events <- function(time = Sys.time(), processed_data_db){
   
   # Read in existing flood event data from Google Sheets
   existing_flood_events <- suppressMessages(googlesheets4::read_sheet(ss = sheets_ID))
-  
+
   # segment the adjusted water level measurements into flood events
   flood_events_df <- find_flood_events(x = adjusted_wl, existing_flood_events = existing_flood_events)
   
@@ -229,8 +229,46 @@ document_flood_events <- function(time = Sys.time(), processed_data_db){
   if(is_it_flooding_now(flood_events_df) == T){
     # Add notification code here if it is currently flooding, but don't write it to the spreadsheet yet until it is over
     
+    # twitteR::setup_twitter_oauth(consumer_key =  Sys.getenv("TWITTER_API_KEY"),
+    #                              consumer_secret =  Sys.getenv("TWITTER_API_KEY_SECRET"),
+    #                              access_token = Sys.getenv("TWITTER_ACCESS_TOKEN"),
+    #                              access_secret = Sys.getenv("TWITTER_ACCESS_TOKEN_SECRET"))
+    # 
+    # twitteR::setup_twitter_oauth(consumer_key =  Sys.getenv("TWITTER_API_KEY"),
+    #                              consumer_secret =  Sys.getenv("TWITTER_API_KEY_SECRET"))
+    
+    token <- rtweet::create_token(
+      app = "sunny-day-flooding-alerts",
+      consumer_key = Sys.getenv("TWITTER_API_KEY"),
+      consumer_secret = Sys.getenv("TWITTER_API_KEY_SECRET"),
+      set_renv = T)
+    
+    location <- sensor_locations %>% collect() %>% filter(sensor_ID %in% unique(flood_events_df$sensor_ID))
+    
+    # latest_status <- twitteR::updateStatus(text = "TEST of automatic flood alerts via twitter for the Sunny Day Flooding project",
+    #                lat = location$lat,
+    #                long = location$lng,
+    #                displayCoords = T)
+    # 
+    # twitteR::deleteStatus(latest_status)
+    
+    # token <- rtweet::get_token()
+    
+    rtweet::post_tweet(status = paste("⚠️ TEST FLOOD ALERT. NOT ACTUAL FLOOD EVENT ⚠️ \n \nLikely road flooding in",location$place, "(sensor", location$sensor_ID, "). \n \nVisit go.unc.edu/flood-data to view live images and water level data.", sep=" "),
+                       )
+    
+    ## lookup status_id
+    # my_timeline <- get_my_timeline()
+    
+    # ## ID for reply
+    # reply_id <- my_timeline %>% 
+    #   filter(source == "sunny-day-flooding-alerts") %>% 
+    #   slice(1)
+    # 
+    # rtweet::post_tweet(destroy_id = reply_id$status_id)
+    
     flood_events_df <- flood_events_df %>% 
-      filter(flood_group < max(flood_group, na.rm = T))
+      filter(flood_event < max(flood_event, na.rm = T))
   }
   
   # The time data seemed to be slightly off after being saved/read from Google Sheets, so
