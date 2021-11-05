@@ -18,26 +18,26 @@ library(stringr)
 # Source env variables if working on desktop
 # source("/Users/adam/Documents/SunnyD/sunnyday_postgres_keys.R")
 
-# Connect to database
-con <- dbPool(
-  drv = RPostgres::Postgres(),
-  dbname = Sys.getenv("POSTGRESQL_DATABASE"),
-  host = Sys.getenv("POSTGRESQL_HOSTNAME"),
-  port = Sys.getenv("POSTGRESQL_PORT"),
-  password = Sys.getenv("POSTGRESQL_PASSWORD"),
-  user = Sys.getenv("POSTGRESQL_USER")
-)
-
-# Connect to sensor location table
-sensor_locations <- con %>%
-  tbl("sensor_locations") 
-
-# These are just connections for reading/writing
-raw_data <- con %>%
-  tbl("sensor_data")
-
-processed_data <- con %>% 
-  tbl("sensor_data_processed")
+# # Connect to database
+# con <- dbPool(
+#   drv = RPostgres::Postgres(),
+#   dbname = Sys.getenv("POSTGRESQL_DATABASE"),
+#   host = Sys.getenv("POSTGRESQL_HOSTNAME"),
+#   port = Sys.getenv("POSTGRESQL_PORT"),
+#   password = Sys.getenv("POSTGRESQL_PASSWORD"),
+#   user = Sys.getenv("POSTGRESQL_USER")
+# )
+# 
+# # Connect to sensor location table
+# sensor_locations <- con %>%
+#   tbl("sensor_locations") 
+# 
+# # These are just connections for reading/writing
+# raw_data <- con %>%
+#   tbl("sensor_data")
+# 
+# processed_data <- con %>% 
+#   tbl("sensor_data_processed")
 
 #------------------------ Functions to retrieve atm pressure -------------------
 
@@ -210,131 +210,136 @@ find_flood_events <- function(x, existing_flood_events, flood_cutoff = 0){
 }
 
 
-document_flood_events <- function(time = Sys.time(), processed_data_db){
-  # correct for drift
-  adjusted_wl <- adjust_wl(time = time, processed_data_db = processed_data_db)
+document_flood_events <- function(){#time = Sys.time(), processed_data_db){
+  # # correct for drift
+  # adjusted_wl <- adjust_wl(time = time, processed_data_db = processed_data_db)
+  # 
+  # # Read in existing flood event data from Google Sheets
+  # existing_flood_events <- suppressMessages(googlesheets4::read_sheet(ss = sheets_ID))
+  # 
+  # # segment the adjusted water level measurements into flood events
+  # flood_events_df <- find_flood_events(x = adjusted_wl, existing_flood_events = existing_flood_events)
+  # 
+  # # No flood events detected, return the function
+  # if(is.null(flood_events_df)){
+  #   return(cat("No flooding detected!\n"))
+  # }
   
-  # Read in existing flood event data from Google Sheets
-  existing_flood_events <- suppressMessages(googlesheets4::read_sheet(ss = sheets_ID))
-
-  # segment the adjusted water level measurements into flood events
-  flood_events_df <- find_flood_events(x = adjusted_wl, existing_flood_events = existing_flood_events)
-  
-  # No flood events detected, return the function
-  if(is.null(flood_events_df)){
-    return(cat("No flooding detected!\n"))
-  }
-  
-  rtweet::get_token()
+  # rtweet::get_token()
   # 
   # rtweet::post_tweet(status = paste("⚠️ TEST FLOOD ALERT. NOT ACTUAL FLOOD EVENT ⚠️ \n \nLikely road flooding in",location$place, "(sensor", location$sensor_ID, "). \n \nVisit go.unc.edu/flood-data to view live images and water level data.", sep=" "),
   #                    )
   
   ## lookup status_id
-  my_timeline <- rtweet::get_my_timeline()
+  twitter_token <- readRDS(Sys.getenv("TWITTER_TOKEN"))
+  
+  my_timeline <- rtweet::get_my_timeline(token = twitter_token)
   print(my_timeline)
   
   # check if it is currently flooding. If it is, add code to notify and remove the latest flood group
   # so it doesn't add unfinished flood event to the database
-  if(is_it_flooding_now(flood_events_df) == T){
-    # Add notification code here if it is currently flooding, but don't write it to the spreadsheet yet until it is over
-    
-    # twitteR::setup_twitter_oauth(consumer_key =  Sys.getenv("TWITTER_API_KEY"),
-    #                              consumer_secret =  Sys.getenv("TWITTER_API_KEY_SECRET"),
-    #                              access_token = Sys.getenv("TWITTER_ACCESS_TOKEN"),
-    #                              access_secret = Sys.getenv("TWITTER_ACCESS_TOKEN_SECRET"))
-    # 
-    # twitteR::setup_twitter_oauth(consumer_key =  Sys.getenv("TWITTER_API_KEY"),
-    #                              consumer_secret =  Sys.getenv("TWITTER_API_KEY_SECRET"))
-    
-    # token <- rtweet::create_token(
-    #   app = "sunny-day-flooding-alerts",
-    #   consumer_key = Sys.getenv("TWITTER_API_KEY"),
-    #   consumer_secret = Sys.getenv("TWITTER_API_KEY_SECRET"),
-    #   set_renv = T)
-    
-    location <- sensor_locations %>% collect() %>% filter(sensor_ID %in% unique(flood_events_df$sensor_ID))
-    
-    # latest_status <- twitteR::updateStatus(text = "TEST of automatic flood alerts via twitter for the Sunny Day Flooding project",
-    #                lat = location$lat,
-    #                long = location$lng,
-    #                displayCoords = T)
-    # 
-    # twitteR::deleteStatus(latest_status)
-    
-    rtweet::get_token()
-    # 
-    # rtweet::post_tweet(status = paste("⚠️ TEST FLOOD ALERT. NOT ACTUAL FLOOD EVENT ⚠️ \n \nLikely road flooding in",location$place, "(sensor", location$sensor_ID, "). \n \nVisit go.unc.edu/flood-data to view live images and water level data.", sep=" "),
-    #                    )
-    
-    ## lookup status_id
-    my_timeline <- rtweet::get_my_timeline()
-    print(my_timeline)
-    
-    # ## ID for reply
-    # reply_id <- my_timeline %>% 
-    #   filter(source == "sunny-day-flooding-alerts") %>% 
-    #   slice(1)
-    # 
-    # rtweet::post_tweet(destroy_id = reply_id$status_id)
-    
-    flood_events_df <- flood_events_df %>% 
-      filter(flood_event < max(flood_event, na.rm = T))
-  }
-  
-  # The time data seemed to be slightly off after being saved/read from Google Sheets, so
-  # this gives a 1 minute buffer on either side of the time for comparison of new data to
-  # existing data
-
-  
-  if(nrow(flood_events_df) == 0){
-    return(cat("No new flood events!\n"))
-  }
-  
-  if(nrow(flood_events_df) > 0){
-    
-    flood_event_name <- unique(flood_events_df$flood_event)
-    
-    flood_events_df$pic_link <- "NA"
-    
-    flood_events_w_pic <- foreach(k = 1:length(flood_event_name), .combine = "bind_rows") %do% {
-      selected_flood <- flood_events_df %>% 
-        filter(flood_event == flood_event_name[k]) 
-      
-      days_of_flood <- selected_flood %>% 
-        pull(date) %>% 
-        as_date() %>% 
-        unique()
-      
-      folder_info <- suppressMessages(googledrive::drive_get(path = paste0("Images/","CAM_",unique(selected_flood$sensor_ID),"/",days_of_flood,"/"),shared_drive = as_id(Sys.getenv("GOOGLE_SHARED_DRIVE_ID"))))
-
-      image_list <- suppressMessages(drive_ls(folder_info$id)) %>% 
-        mutate(pic_time = ymd_hms(sapply(stringr::str_split(name, pattern = "_"), tail, 1)))
-      
-      selected_flood_w_pic <- foreach(j = 1:nrow(selected_flood), .combine = "bind_rows") %do% {
-        
-        min_flood_time <- min(selected_flood$date[j], na.rm=T) - minutes(5)
-        max_flood_time <- max(selected_flood$date[j], na.rm=T) + minutes(5)
-        
-        filtered_image_list <- image_list %>% 
-          filter(pic_time > min_flood_time & pic_time < max_flood_time)
-        
-        if(nrow(filtered_image_list) == 0){
-          return(selected_flood[j,] %>% 
-                   mutate(pic_link = NA))
-        }
-        
-        filtered_image_list <- filtered_image_list %>% 
-          mutate(diff_to_pic_time = abs(selected_flood$date[j] - pic_time)) %>% 
-          filter(diff_to_pic_time == min(diff_to_pic_time)) %>% 
-          slice(1) %>% 
-          mutate(pic_link = drive_resource[[1]]$webViewLink)
-        
-        return(selected_flood[j,] %>% 
-          mutate(pic_link = filtered_image_list$pic_link))
-        }
-      }
-    }
+  # if(is_it_flooding_now(flood_events_df) == T){
+  #   # Add notification code here if it is currently flooding, but don't write it to the spreadsheet yet until it is over
+  #   
+  #   # twitteR::setup_twitter_oauth(consumer_key =  Sys.getenv("TWITTER_API_KEY"),
+  #   #                              consumer_secret =  Sys.getenv("TWITTER_API_KEY_SECRET"),
+  #   #                              access_token = Sys.getenv("TWITTER_ACCESS_TOKEN"),
+  #   #                              access_secret = Sys.getenv("TWITTER_ACCESS_TOKEN_SECRET"))
+  #   # 
+  #   # twitteR::setup_twitter_oauth(consumer_key =  Sys.getenv("TWITTER_API_KEY"),
+  #   #                              consumer_secret =  Sys.getenv("TWITTER_API_KEY_SECRET"))
+  #   
+  #   # token <- rtweet::create_token(
+  #   #   app = "sunny-day-flooding-alerts",
+  #   #   consumer_key = Sys.getenv("TWITTER_API_KEY"),
+  #   #   consumer_secret = Sys.getenv("TWITTER_API_KEY_SECRET"),
+  #   #   set_renv = T)
+  #   
+  #   location <- sensor_locations %>% collect() %>% filter(sensor_ID %in% unique(flood_events_df$sensor_ID))
+  #   
+  #   # latest_status <- twitteR::updateStatus(text = "TEST of automatic flood alerts via twitter for the Sunny Day Flooding project",
+  #   #                lat = location$lat,
+  #   #                long = location$lng,
+  #   #                displayCoords = T)
+  #   # 
+  #   # twitteR::deleteStatus(latest_status)
+  #   
+  #   # rtweet::get_token()
+  #   # 
+  #   # rtweet::post_tweet(status = paste("⚠️ TEST FLOOD ALERT. NOT ACTUAL FLOOD EVENT ⚠️ \n \nLikely road flooding in",location$place, "(sensor", location$sensor_ID, "). \n \nVisit go.unc.edu/flood-data to view live images and water level data.", sep=" "),
+  #   #                    )
+  #   
+  #   ## lookup status_id
+  #   
+  #   twitter_token <- Sys.getenv("TWITTER_TOKEN")
+  #   
+  #   my_timeline <- rtweet::get_my_timeline(token = twitter_token)
+  #   print(my_timeline)
+  #   
+  #   # ## ID for reply
+  #   # reply_id <- my_timeline %>% 
+  #   #   filter(source == "sunny-day-flooding-alerts") %>% 
+  #   #   slice(1)
+  #   # 
+  #   # rtweet::post_tweet(destroy_id = reply_id$status_id)
+  #   
+  #   flood_events_df <- flood_events_df %>% 
+  #     filter(flood_event < max(flood_event, na.rm = T))
+  # }
+  # 
+  # # The time data seemed to be slightly off after being saved/read from Google Sheets, so
+  # # this gives a 1 minute buffer on either side of the time for comparison of new data to
+  # # existing data
+  # 
+  # 
+  # if(nrow(flood_events_df) == 0){
+  #   return(cat("No new flood events!\n"))
+  # }
+  # 
+  # if(nrow(flood_events_df) > 0){
+  #   
+  #   flood_event_name <- unique(flood_events_df$flood_event)
+  #   
+  #   flood_events_df$pic_link <- "NA"
+  #   
+  #   flood_events_w_pic <- foreach(k = 1:length(flood_event_name), .combine = "bind_rows") %do% {
+  #     selected_flood <- flood_events_df %>% 
+  #       filter(flood_event == flood_event_name[k]) 
+  #     
+  #     days_of_flood <- selected_flood %>% 
+  #       pull(date) %>% 
+  #       as_date() %>% 
+  #       unique()
+  #     
+  #     folder_info <- suppressMessages(googledrive::drive_get(path = paste0("Images/","CAM_",unique(selected_flood$sensor_ID),"/",days_of_flood,"/"),shared_drive = as_id(Sys.getenv("GOOGLE_SHARED_DRIVE_ID"))))
+  # 
+  #     image_list <- suppressMessages(drive_ls(folder_info$id)) %>% 
+  #       mutate(pic_time = ymd_hms(sapply(stringr::str_split(name, pattern = "_"), tail, 1)))
+  #     
+  #     selected_flood_w_pic <- foreach(j = 1:nrow(selected_flood), .combine = "bind_rows") %do% {
+  #       
+  #       min_flood_time <- min(selected_flood$date[j], na.rm=T) - minutes(5)
+  #       max_flood_time <- max(selected_flood$date[j], na.rm=T) + minutes(5)
+  #       
+  #       filtered_image_list <- image_list %>% 
+  #         filter(pic_time > min_flood_time & pic_time < max_flood_time)
+  #       
+  #       if(nrow(filtered_image_list) == 0){
+  #         return(selected_flood[j,] %>% 
+  #                  mutate(pic_link = NA))
+  #       }
+  #       
+  #       filtered_image_list <- filtered_image_list %>% 
+  #         mutate(diff_to_pic_time = abs(selected_flood$date[j] - pic_time)) %>% 
+  #         filter(diff_to_pic_time == min(diff_to_pic_time)) %>% 
+  #         slice(1) %>% 
+  #         mutate(pic_link = drive_resource[[1]]$webViewLink)
+  #       
+  #       return(selected_flood[j,] %>% 
+  #         mutate(pic_link = filtered_image_list$pic_link))
+  #       }
+  #     }
+  #   }
     
     # suppressMessages(googlesheets4::sheet_append(ss = sheets_ID,
     #                                              data = flood_events_w_pic %>% 
@@ -508,7 +513,7 @@ while(run ==T){
   
   if(flood_tracker == 0){
     # Extract flood events and write to Google Sheets
-    document_flood_events(processed_data_db = processed_data)
+    document_flood_events()#processed_data_db = processed_data)
   }
   
   # flood_tracker <- flood_tracker + 1
