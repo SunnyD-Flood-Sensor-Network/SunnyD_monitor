@@ -13,6 +13,7 @@ library(later)
 library(googledrive)
 library(googlesheets4)
 library(tidyr)
+library(stringr)
 
 # Source env variables if working on desktop
 # source("/Users/adam/Documents/SunnyD/sunnyday_postgres_keys.R")
