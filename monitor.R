@@ -237,11 +237,11 @@ document_flood_events <- function(time = Sys.time(), processed_data_db){
     # twitteR::setup_twitter_oauth(consumer_key =  Sys.getenv("TWITTER_API_KEY"),
     #                              consumer_secret =  Sys.getenv("TWITTER_API_KEY_SECRET"))
     
-    token <- rtweet::create_token(
-      app = "sunny-day-flooding-alerts",
-      consumer_key = Sys.getenv("TWITTER_API_KEY"),
-      consumer_secret = Sys.getenv("TWITTER_API_KEY_SECRET"),
-      set_renv = T)
+    # token <- rtweet::create_token(
+    #   app = "sunny-day-flooding-alerts",
+    #   consumer_key = Sys.getenv("TWITTER_API_KEY"),
+    #   consumer_secret = Sys.getenv("TWITTER_API_KEY_SECRET"),
+    #   set_renv = T)
     
     location <- sensor_locations %>% collect() %>% filter(sensor_ID %in% unique(flood_events_df$sensor_ID))
     
@@ -252,7 +252,7 @@ document_flood_events <- function(time = Sys.time(), processed_data_db){
     # 
     # twitteR::deleteStatus(latest_status)
     
-    # token <- rtweet::get_token()
+    rtweet::get_token()
     
     rtweet::post_tweet(status = paste("⚠️ TEST FLOOD ALERT. NOT ACTUAL FLOOD EVENT ⚠️ \n \nLikely road flooding in",location$place, "(sensor", location$sensor_ID, "). \n \nVisit go.unc.edu/flood-data to view live images and water level data.", sep=" "),
                        )
