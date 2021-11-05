@@ -225,6 +225,15 @@ document_flood_events <- function(time = Sys.time(), processed_data_db){
     return(cat("No flooding detected!\n"))
   }
   
+  rtweet::get_token()
+  # 
+  # rtweet::post_tweet(status = paste("⚠️ TEST FLOOD ALERT. NOT ACTUAL FLOOD EVENT ⚠️ \n \nLikely road flooding in",location$place, "(sensor", location$sensor_ID, "). \n \nVisit go.unc.edu/flood-data to view live images and water level data.", sep=" "),
+  #                    )
+  
+  ## lookup status_id
+  my_timeline <- rtweet::get_my_timeline()
+  print(my_timeline)
+  
   # check if it is currently flooding. If it is, add code to notify and remove the latest flood group
   # so it doesn't add unfinished flood event to the database
   if(is_it_flooding_now(flood_events_df) == T){
@@ -253,13 +262,14 @@ document_flood_events <- function(time = Sys.time(), processed_data_db){
     # 
     # twitteR::deleteStatus(latest_status)
     
-    # rtweet::get_token()
+    rtweet::get_token()
     # 
     # rtweet::post_tweet(status = paste("⚠️ TEST FLOOD ALERT. NOT ACTUAL FLOOD EVENT ⚠️ \n \nLikely road flooding in",location$place, "(sensor", location$sensor_ID, "). \n \nVisit go.unc.edu/flood-data to view live images and water level data.", sep=" "),
     #                    )
     
     ## lookup status_id
-    # my_timeline <- get_my_timeline()
+    my_timeline <- rtweet::get_my_timeline()
+    print(my_timeline)
     
     # ## ID for reply
     # reply_id <- my_timeline %>% 
@@ -326,10 +336,10 @@ document_flood_events <- function(time = Sys.time(), processed_data_db){
       }
     }
     
-    suppressMessages(googlesheets4::sheet_append(ss = sheets_ID,
-                                                 data = flood_events_w_pic %>% 
-                                                   dplyr::select(-c(min_date,max_date))))
-    return(cat("Wrote new flood events!\n"))
+    # suppressMessages(googlesheets4::sheet_append(ss = sheets_ID,
+    #                                              data = flood_events_w_pic %>% 
+    #                                                dplyr::select(-c(min_date,max_date))))
+    return(cat("Wrote new flood events! but not really \n"))
 
   }
 
@@ -490,18 +500,18 @@ while(run ==T){
   print(start_time)
   
   # calculate water level and write data
-  monitor_function(debug = T)
+  # monitor_function(debug = T)
   
-  if(flood_tracker == 10){
-    flood_tracker <- 0
-  }
+  # if(flood_tracker == 10){
+  #   flood_tracker <- 0
+  # }
   
   if(flood_tracker == 0){
     # Extract flood events and write to Google Sheets
     document_flood_events(processed_data_db = processed_data)
   }
   
-  flood_tracker <- flood_tracker + 1
+  # flood_tracker <- flood_tracker + 1
   
   # Wait to make the delay 6 minutes
   delay <- difftime(Sys.time(),start_time, units = "secs")
