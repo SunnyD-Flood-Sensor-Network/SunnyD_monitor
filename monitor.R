@@ -175,13 +175,14 @@ detect_flooding <- function(x){
   
   last_measurement <- latest_measurements %>% 
     filter(date == max(date, na.rm=T)) %>% 
-    mutate(above_alert_wl = road_water_level >= -0.5,
+    mutate(above_alert_wl = road_water_level_adj >= -0.5,
            time_since_measurement = current_time - date,
            is_flooding = (time_since_measurement > (min_interval + 6 + 6 + 3)) & above_alert_wl)
     
   return(last_measurement %>% 
            ungroup() %>% 
-           transmute(place, latest_measurement = date, current_time = current_time, is_flooding))
+           transmute(place, latest_measurement = date, current_time = current_time, is_flooding)
+         )
 }
 
 
@@ -300,6 +301,9 @@ document_flood_events <- function(time = Sys.time(), processed_data_db, write_to
         flood_events_df %>% 
           filter(sensor_ID == flooding_sensors[i])
       }
+      else(flood_events_df %>% 
+             filter(sensor_ID == flooding_sensors[i]) %>% 
+             slice(0))
     }
     
     if(nrow(flood_events_df) == 0){
@@ -483,10 +487,16 @@ alert_flooding <- function(x, latest_flooding_df, latest_not_flooding_df){
         filter(is_flooding == T) %>% 
         filter(latest_measurement == min(latest_measurement, na.rm=T))
       
-      if(latest_flooding_df %>% 
-         filter(place == places[i]) %>% 
-         pull(latest_measurement) < site_flooding_data %>% 
-         pull(latest_measurement)){
+      latest_flood <- latest_flooding_df %>% 
+        filter(place == places[i]) %>% 
+        pull(latest_measurement)
+      
+      latest_not_flood <- latest_not_flooding_df %>% 
+        filter(place == places[i]) %>% 
+        pull(latest_measurement)
+      
+      if((latest_not_flood > latest_flood) & (site_flooding_data %>% 
+         pull(latest_measurement) > latest_not_flood)){
         
         cat("Sending new flood alert for: \n", places[i],"\n")
         send_new_alert(places[i])
@@ -656,8 +666,8 @@ googlesheets4::gs4_auth(token = googledrive::drive_token())
 run = T
 flood_tracker = 0
 
-latest_flooding_df <- detect_flooding(adjust_wl(processed_data_db = processed_data)) %>% slice(1)
-latest_not_flooding_df <- detect_flooding(adjust_wl(processed_data_db = processed_data)) %>% slice(1)
+latest_flooding_df <- detect_flooding(adjust_wl(processed_data_db = processed_data) %>% slice_head(n=5)) %>% slice(1)
+latest_not_flooding_df <- detect_flooding(adjust_wl(processed_data_db = processed_data) %>% slice_head(n=10)) %>% slice(1)
 
 
 while(run ==T){
