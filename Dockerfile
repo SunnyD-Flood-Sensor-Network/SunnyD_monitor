@@ -17,7 +17,7 @@ RUN apt-get update && \
     apt-get clean
 
 # install renv & restore packages
-RUN install2.r dplyr dbplyr lubridate RPostgres DBI foreach dbx readr pool httr later googledrive googlesheets4 tidyr stringr jsonlite crul MASS
+RUN install2.r vctrs dplyr dbplyr lubridate RPostgres DBI foreach dbx readr pool httr later googledrive googlesheets4 tidyr stringr jsonlite crul MASS
 
 RUN groupadd -r monitor && useradd --no-log-init -r -g monitor monitor
 

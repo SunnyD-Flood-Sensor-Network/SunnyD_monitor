@@ -625,9 +625,18 @@ monitor_function <- function(debug = T) {
           distinct()
       }
       
-      interpolated_data_filtered <- pre_interpolated_data_filtered %>% 
-        filter(date > min(atm_tibble$date, na.rm=T) & date < max(atm_tibble$date, na.rm=T)) %>% 
-        mutate(pressure_mb = approxfun(atm_tibble$date, atm_tibble$pressure_mb)(date)) 
+      atm_tibble_bounds_data <- (min(pre_interpolated_data_filtered$date, na.rm=T) > min(atm_tibble$date, na.rm=T)) & (max(pre_interpolated_data_filtered$date, na.rm=T) < max(atm_tibble$date, na.rm=T))
+      
+      if(!atm_tibble_bounds_data & selected_place_name == "New Bern, North Carolina"){
+        atm_tibble <- bind_rows(atm_tibble,
+                                atm_tibble %>% 
+                                  filter(date == max(date, na.rm=T)) %>%
+                                  mutate(date =  max(pre_interpolated_data_filtered$date, na.rm=T) + minutes(10)))
+      }
+      
+      interpolated_data_filtered <- pre_interpolated_data_filtered %>%
+        filter(date > min(atm_tibble$date, na.rm=T) & date < max(atm_tibble$date, na.rm=T)) %>%
+        mutate(pressure_mb = approxfun(atm_tibble$date, atm_tibble$pressure_mb)(date))
       
       if(debug == T) {
         cat("- New raw data detected for:", selected_place_name, "\n")
