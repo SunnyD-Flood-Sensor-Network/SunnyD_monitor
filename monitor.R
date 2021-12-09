@@ -156,8 +156,8 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
       filter(deriv < 0.1)
     
     smoothed_min_wl <- tibble("date" = min_wl %>% filter(change_pt == T) %>% pull(date),
-                              "smoothed_min_wl" = MASS::rlm(min_wl~as.numeric(date), data = min_wl %>% filter(change_pt == T))$fitted
-                              # "smoothed_min_wl" = loess(min_wl~as.numeric(date), data = min_wl %>% filter(change_pt == T))$fitted
+                              # "smoothed_min_wl" = MASS::rlm(min_wl~as.numeric(date), data = min_wl %>% filter(change_pt == T))$fitted
+                              "smoothed_min_wl" = loess(min_wl~as.numeric(date), data = min_wl %>% filter(change_pt == T))$fitted
     )
     
     smoothed_wl_df <- min_wl %>%
@@ -493,11 +493,16 @@ chmp_PUT <- function(dc = "us20", path, key, query = list(), body = NULL,
 select_campaign_id <- function(place){
   switch(place,
          "Beaufort, North Carolina" = Sys.getenv("MAILCHIMP_BFT_ID"),
-         "Carolina Beach, North Carolina" = Sys.getenv("MAILCHIMP_CB_ID"))
+         "Carolina Beach, North Carolina" = Sys.getenv("MAILCHIMP_CB_ID"),
+         "New Bern, North Carolina" = NA)
 }
 
 send_new_alert <- function(place){
   base_campaign <- select_campaign_id(place)
+  
+  if(is.na(base_campaign)){
+    return(cat("No campaign set up for: ",place, " No alert sent! \n"))
+  }
   
   copied_campaign <- chmp_POST(path=paste0("campaigns/",base_campaign,"/actions/replicate"), key = Sys.getenv("MAILCHIMP_KEY")) %>% 
     jsonlite::fromJSON()
@@ -507,7 +512,9 @@ send_new_alert <- function(place){
            body=paste0("{\"plain_text\":\"Flood Alert for ",place,"\\n\\nRoadway flooding estimated at ", format(Sys.time(),"%m/%d/%Y %H:%M%P %Z"),"\\n\\nVisit go.unc.edu/flood-data to view live data and pictures of the site.\"}"))
   
   chmp_POST(path=paste0("campaigns/",copied_campaign$id,"/actions/send"), key = Sys.getenv("MAILCHIMP_KEY")) 
-}
+
+  cat("Sent new flood alert for: \n", place,"\n")
+  }
 
 alert_flooding <- function(x, latest_flooding_df, latest_not_flooding_df){
   is_flooding <- detect_flooding(x)
@@ -537,7 +544,6 @@ alert_flooding <- function(x, latest_flooding_df, latest_not_flooding_df){
       if((latest_not_flood > latest_flood) & (site_flooding_data %>% 
          pull(latest_measurement) > latest_not_flood)){
         
-        cat("Sending new flood alert for: \n", places[i],"\n")
         send_new_alert(places[i])
       }
       
@@ -705,8 +711,8 @@ googlesheets4::gs4_auth(token = googledrive::drive_token())
 run = T
 flood_tracker = 0
 
-latest_flooding_df <- detect_flooding(adjust_wl(processed_data_db = processed_data) %>% slice_head(n=5)) %>% slice(1)
-latest_not_flooding_df <- detect_flooding(adjust_wl(processed_data_db = processed_data) %>% slice_head(n=10)) %>% slice(1)
+latest_flooding_df <- detect_flooding(adjust_wl(processed_data_db = processed_data) %>% group_by(place) %>% slice_head(n=1)) 
+latest_not_flooding_df <- detect_flooding(adjust_wl(processed_data_db = processed_data) %>% group_by(place) %>% slice_tail(n=1)) 
 
 
 while(run ==T){
