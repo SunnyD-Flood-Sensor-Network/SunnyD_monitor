@@ -628,7 +628,7 @@ monitor_function <- function(debug = T) {
       atm_tibble_bounds_data <- (min(pre_interpolated_data_filtered$date, na.rm=T) > min(atm_tibble$date, na.rm=T)) & (max(pre_interpolated_data_filtered$date, na.rm=T) < max(atm_tibble$date, na.rm=T))
       
       if(nrow(atm_tibble) == 1 & selected_place_name == "Beaufort, North Carolina"){
-        return(cat("Only one atmospheric pressure value for Beaufort, North Carolina - cannot interpolate!"))
+        return(pre_interpolated_data_filtered %>% slice(0))
       }
       
       if(!atm_tibble_bounds_data & selected_place_name == "New Bern, North Carolina"){
@@ -686,6 +686,12 @@ monitor_function <- function(debug = T) {
         dplyr::select(-c(tag,diff_lag, time_lag, diff_per_time_lag))
       
       final_data
+    }
+    
+    cat("Only one atmospheric pressure value for Beaufort, North Carolina - cannot interpolate!")
+    
+    if(nrow(interpolated_data) == 0){
+      return(cat("No data to write"))
     }
     
     dbx::dbxUpsert(
