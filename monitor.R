@@ -139,11 +139,14 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
   
   aggregate_smooth_wl <- foreach(j = 1:length(sensor_list), .combine = "bind_rows") %do% {
     
-    min_wl <- foreach(i = 1:nrow(db_df_collected), .combine = "bind_rows") %do% {
+    site_db_df_collected <- db_df_collected %>% 
+      filter(sensor_ID == sensor_list[j])
+    
+    min_wl <- foreach(i = 1:nrow(site_db_df_collected), .combine = "bind_rows") %do% {
       
-      the_date <- db_df_collected$date[i]
+      the_date <- site_db_df_collected$date[i]
       
-      vals <- db_df_collected$road_water_level[(db_df_collected$date >= (the_date-days(1))) & (db_df_collected$date <= the_date)]
+      vals <- site_db_df_collected$road_water_level[(site_db_df_collected$date >= (the_date-days(1))) & (site_db_df_collected$date <= the_date)]
       
       min_val <- min(vals,na.rm=T)
 
@@ -688,30 +691,31 @@ monitor_function <- function(debug = T) {
       final_data
     }
     
-    cat("Only one atmospheric pressure value for Beaufort, North Carolina - cannot interpolate!")
-    
     if(nrow(interpolated_data) == 0){
-      return(cat("No data to write"))
+      cat("Only one atmospheric pressure value for Beaufort, North Carolina - cannot interpolate! \n")
+      return(cat("No data to write \n"))
     }
     
-    dbx::dbxUpsert(
-      conn = con,
-      table = "sensor_data_processed",
-      records = interpolated_data,
-      where_cols = c("place", "sensor_ID", "date"),
-      skip_existing = F
-    )
-    
-    dbx::dbxUpdate(conn = con,
-                   table="sensor_data",
-                   records = new_data %>% 
-                     semi_join(interpolated_data, by = c("place","sensor_ID","date")) %>% 
-                     mutate(processed = T),
-                   where_cols = c("place", "sensor_ID", "date")
-                   )
-    
-    if (debug == T) {
-      cat("- Wrote to database!", "\n")
+    if(nrow(interpolated_data) > 0){
+      dbx::dbxUpsert(
+        conn = con,
+        table = "sensor_data_processed",
+        records = interpolated_data,
+        where_cols = c("place", "sensor_ID", "date"),
+        skip_existing = F
+      )
+      
+      dbx::dbxUpdate(conn = con,
+                     table="sensor_data",
+                     records = new_data %>% 
+                       semi_join(interpolated_data, by = c("place","sensor_ID","date")) %>% 
+                       mutate(processed = T),
+                     where_cols = c("place", "sensor_ID", "date")
+                     )
+      
+      if (debug == T) {
+        cat("- Wrote to database!", "\n")
+      }
     }
   }
 }
@@ -730,8 +734,8 @@ googlesheets4::gs4_auth(token = googledrive::drive_token())
 run = T
 flood_tracker = 0
 
-latest_flooding_df <- detect_flooding(adjust_wl(processed_data_db = processed_data) %>% group_by(place) %>% slice_head(n=1)) 
-latest_not_flooding_df <- detect_flooding(adjust_wl(processed_data_db = processed_data) %>% group_by(place) %>% slice_tail(n=1)) 
+latest_flooding_df <- detect_flooding(adjust_wl(processed_data_db = processed_data) %>% group_by(place) %>% slice_head(n=5)) 
+latest_not_flooding_df <- detect_flooding(adjust_wl(processed_data_db = processed_data) %>% group_by(place) %>% slice_tail(n=5)) 
 
 
 while(run ==T){
