@@ -43,6 +43,9 @@ raw_data <- con %>%
 processed_data <- con %>% 
   tbl("sensor_data_processed")
 
+drift_corrected_data <- con %>% 
+  tbl("sensor_data_drift_corrected")
+
 #------------------------ Functions to retrieve atm pressure -------------------
 
 beaufort_atm <- function(begin_date, end_date) {
@@ -312,7 +315,14 @@ find_flood_events <- function(x, existing_flood_events, flood_cutoff = 0){
 
 document_flood_events <- function(time = Sys.time(), processed_data_db, write_to_sheet){
   # correct for drift
-  adjusted_wl <- adjust_wl(time = time, processed_data_db = processed_data_db)
+  adjusted_wl <- adjust_wl(time = time, processed_data_db = processed_data_db %>% 
+                             filter(qa_qc_flag == F))
+  
+  dbx::dbxUpsert(conn = con,
+                 table = "sensor_data_drift_corrected",
+                 records = adjusted_wl,
+                 where_cols = c("place","sensor_ID","date"),
+  )
   
   alert_flooding(x = adjusted_wl, latest_flooding_df = latest_flooding_df, latest_not_flooding_df = latest_not_flooding_df)
   
