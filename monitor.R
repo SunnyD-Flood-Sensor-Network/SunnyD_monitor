@@ -132,6 +132,7 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
   
   min_date_x <-  time - days(14)
   min_date_x_shorter <- time - days(7)
+  min_date_x_somewhat_shorter <- time - days(12)
   max_date_x <- time
   
   db_df_collected <- processed_data_db %>% 
@@ -149,7 +150,7 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
       
       the_date <- site_db_df_collected$date[i]
       
-      vals <- site_db_df_collected$road_water_level[(site_db_df_collected$date >= (the_date-days(1))) & (site_db_df_collected$date <= the_date)]
+      vals <- site_db_df_collected$road_water_level[(site_db_df_collected$date >= (the_date-days(2))) & (site_db_df_collected$date <= the_date)]
       
       min_val <- min(vals,na.rm=T)
 
@@ -159,7 +160,8 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
     min_wl <- min_wl %>% 
       mutate(deriv = c(NA,diff(min_wl)),
              change_pt = ifelse(!is.na(deriv), ifelse(deriv != 0, T, F), F)) %>% 
-      filter(deriv < 0.1)
+      filter(deriv < 0.1,
+             date > min_date_x_somewhat_shorter)
     
     smoothed_min_wl <- tibble("date" = min_wl %>% filter(change_pt == T) %>% pull(date),
                               # "smoothed_min_wl" = MASS::rlm(min_wl~as.numeric(date), data = min_wl %>% filter(change_pt == T))$fitted
@@ -168,7 +170,8 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
     
     smoothed_wl_df <- min_wl %>%
       left_join(smoothed_min_wl, by = "date") %>%
-      tidyr::fill(smoothed_min_wl,.direction = "downup") %>%
+      mutate(smoothed_min_wl = approxfun(date, smoothed_min_wl)(date)) %>% 
+      # tidyr::fill(smoothed_min_wl,.direction = "downup") %>%
       dplyr::select(-c(deriv, change_pt)) %>% 
       filter(date >= min_date_x_shorter)
     
@@ -321,7 +324,7 @@ document_flood_events <- function(time = Sys.time() %>% with_tz(tzone = "UTC"), 
   dbx::dbxUpsert(conn = con,
                  table = "sensor_data_drift_corrected",
                  records = adjusted_wl,
-                 where_cols = c("place","sensor_ID","date"),
+                 where_cols = c("place","sensor_ID","date")
   )
   
   alert_flooding(x = adjusted_wl, latest_flooding_df = latest_flooding_df, latest_not_flooding_df = latest_not_flooding_df)
