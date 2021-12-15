@@ -313,7 +313,7 @@ find_flood_events <- function(x, existing_flood_events, flood_cutoff = 0){
 }
 
 
-document_flood_events <- function(time = Sys.time(), processed_data_db, write_to_sheet){
+document_flood_events <- function(time = Sys.time() %>% with_tz(tzone = "UTC"), processed_data_db, write_to_sheet){
   # correct for drift
   adjusted_wl <- adjust_wl(time = time, processed_data_db = processed_data_db %>% 
                              filter(qa_qc_flag == F))
