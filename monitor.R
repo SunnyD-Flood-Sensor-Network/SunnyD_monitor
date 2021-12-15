@@ -170,8 +170,8 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
     
     smoothed_wl_df <- min_wl %>%
       left_join(smoothed_min_wl, by = "date") %>%
-      mutate(smoothed_min_wl = approxfun(date, smoothed_min_wl)(date)) %>% 
-      # tidyr::fill(smoothed_min_wl,.direction = "downup") %>%
+      # mutate(smoothed_min_wl = approxfun(date, smoothed_min_wl)(date)) %>% 
+      tidyr::fill(smoothed_min_wl,.direction = "downup") %>%
       dplyr::select(-c(deriv, change_pt)) %>% 
       filter(date >= min_date_x_shorter)
     
