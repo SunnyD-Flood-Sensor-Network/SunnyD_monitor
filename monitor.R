@@ -139,6 +139,10 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
     filter(date >= min_date_x & date <= max_date_x) %>% 
     collect()
   
+  if(nrow(db_df_collected) == 0){
+    return(cat("No processed data over past 2 weeks available to adjust"))
+  }
+  
   sensor_list <- unique(db_df_collected$sensor_ID)
   
   aggregate_smooth_wl <- foreach(j = 1:length(sensor_list), .combine = "bind_rows") %do% {
@@ -381,10 +385,14 @@ document_flood_events <- function(time = Sys.time() %>% with_tz(tzone = "UTC"), 
           unique()
         
         folder_info <- suppressMessages(googledrive::drive_get(path = paste0("Images/","CAM_",unique(selected_flood$sensor_ID),"/",days_of_flood,"/"),shared_drive = as_id(Sys.getenv("GOOGLE_SHARED_DRIVE_ID"))))
-  
+        
+        if(nrow(folder_info) == 0){
+         return(selected_flood) 
+        }
+        
         image_list <- suppressMessages(drive_ls(folder_info$id)) %>% 
           mutate(pic_time = ymd_hms(sapply(stringr::str_split(name, pattern = "_"), tail, 1)))
-        
+
         selected_flood_w_pic <- foreach(j = 1:nrow(selected_flood), .combine = "bind_rows") %do% {
           
           min_flood_time <- min(selected_flood$date[j], na.rm=T) - minutes(5)
@@ -525,7 +533,7 @@ send_new_alert <- function(place){
   
   chmp_PUT(path = paste0("campaigns/",copied_campaign$id,"/content"),
            key = Sys.getenv("MAILCHIMP_KEY"),
-           body=paste0("{\"plain_text\":\"Flood Alert for ",place,"\\n\\nRoadway flooding estimated at ", format(Sys.time(),"%m/%d/%Y %H:%M%P %Z"),"\\n\\nVisit go.unc.edu/flood-data to view live data and pictures of the site.\"}"))
+           body=paste0("{\"plain_text\":\"Flood Alert for ",place,"\\n\\nRoadway flooding estimated at ", format(Sys.time(),"%m/%d/%Y %H:%M%P %Z"),"\\n\\nVisit https://go.unc.edu/flood-data to view live data and pictures of the site.\"}"))
   
   chmp_POST(path=paste0("campaigns/",copied_campaign$id,"/actions/send"), key = Sys.getenv("MAILCHIMP_KEY")) 
 
@@ -747,9 +755,12 @@ googlesheets4::gs4_auth(token = googledrive::drive_token())
 run = T
 flood_tracker = 0
 
-latest_flooding_df <- detect_flooding(adjust_wl(processed_data_db = processed_data) %>% group_by(place) %>% slice_head(n=5)) 
-latest_not_flooding_df <- detect_flooding(adjust_wl(processed_data_db = processed_data) %>% group_by(place) %>% slice_tail(n=5)) 
-
+last_time <- processed_data %>% 
+  slice_max(order_by = date, n=1) %>% 
+  pull(date)
+  
+latest_flooding_df <- detect_flooding(adjust_wl(processed_data_db = processed_data, time = last_time) %>% group_by(place) %>% slice_head(n=5))
+latest_not_flooding_df <- detect_flooding(adjust_wl(processed_data_db = processed_data, time = last_time) %>% group_by(place) %>% slice_tail(n=5))
 
 while(run ==T){
   start_time <- Sys.time()
