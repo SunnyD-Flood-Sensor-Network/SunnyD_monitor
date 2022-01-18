@@ -390,8 +390,10 @@ document_flood_events <- function(time = Sys.time() %>% with_tz(tzone = "UTC"), 
          return(selected_flood) 
         }
         
-        image_list <- suppressMessages(drive_ls(folder_info$id)) %>% 
+        image_list <- foreach(l = 1:nrow(folder_info), .combine = "bind_rows") %do% {
+          suppressMessages(drive_ls(folder_info$id[l])) %>% 
           mutate(pic_time = ymd_hms(sapply(stringr::str_split(name, pattern = "_"), tail, 1)))
+        }
 
         selected_flood_w_pic <- foreach(j = 1:nrow(selected_flood), .combine = "bind_rows") %do% {
           
