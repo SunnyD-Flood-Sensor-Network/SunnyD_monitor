@@ -651,6 +651,10 @@ monitor_function <- function(debug = T) {
           distinct()
       }
       
+      if(nrow(atm_tibble) == 0){
+        return()
+      }
+      
       atm_tibble_bounds_data <- (min(pre_interpolated_data_filtered$date, na.rm=T) > min(atm_tibble$date, na.rm=T)) & (max(pre_interpolated_data_filtered$date, na.rm=T) < max(atm_tibble$date, na.rm=T))
       
       if(nrow(atm_tibble) == 1 & selected_place_name == "Beaufort, North Carolina"){
