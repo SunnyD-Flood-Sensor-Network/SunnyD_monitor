@@ -718,32 +718,40 @@ monitor_function <- function(debug = T) {
       final_data
     }
     
-    if(nrow(interpolated_data) == 0){
-      cat("Only one atmospheric pressure value for Beaufort, North Carolina - cannot interpolate! \n")
+    if(is.null(interpolated_data)){
       return(cat("No data to write \n"))
     }
     
-    if(nrow(interpolated_data) > 0){
-      dbx::dbxUpsert(
-        conn = con,
-        table = "sensor_data_processed",
-        records = interpolated_data,
-        where_cols = c("place", "sensor_ID", "date"),
-        skip_existing = F
-      )
+    if(!is.null(interpolated_data)){
+      if(nrow(interpolated_data) == 0){
+        cat("Only one atmospheric pressure value for Beaufort, North Carolina - cannot interpolate! \n")
+        return(cat("No data to write \n"))
+      }
       
-      dbx::dbxUpdate(conn = con,
-                     table="sensor_data",
-                     records = new_data %>% 
-                       semi_join(interpolated_data, by = c("place","sensor_ID","date")) %>% 
-                       mutate(processed = T),
-                     where_cols = c("place", "sensor_ID", "date")
-                     )
-      
-      if (debug == T) {
-        cat("- Wrote to database!", "\n")
+      if(nrow(interpolated_data) > 0){
+        dbx::dbxUpsert(
+          conn = con,
+          table = "sensor_data_processed",
+          records = interpolated_data,
+          where_cols = c("place", "sensor_ID", "date"),
+          skip_existing = F
+        )
+        
+        dbx::dbxUpdate(conn = con,
+                       table="sensor_data",
+                       records = new_data %>% 
+                         semi_join(interpolated_data, by = c("place","sensor_ID","date")) %>% 
+                         mutate(processed = T),
+                       where_cols = c("place", "sensor_ID", "date")
+        )
+        
+        if (debug == T) {
+          cat("- Wrote to database!", "\n")
+        }
       }
     }
+    
+    
   }
 }
 
