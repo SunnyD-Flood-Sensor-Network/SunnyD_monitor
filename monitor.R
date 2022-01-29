@@ -227,7 +227,7 @@ detect_flooding <- function(x){
   
   last_measurement <- latest_measurements %>% 
     filter(date == max(date, na.rm=T)) %>% 
-    mutate(above_alert_wl = road_water_level_adj >= -0.65,
+    mutate(above_alert_wl = road_water_level_adj >= -1,
            time_since_measurement = current_time - date,
            is_flooding = (time_since_measurement > (min_interval + 6 + 6 + 3)) & above_alert_wl)
     
