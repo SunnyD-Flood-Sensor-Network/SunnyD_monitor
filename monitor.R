@@ -18,6 +18,18 @@ library(jsonlite)
 library(crul)
 library(MASS)
 
+
+#-------- Description --------------
+# This code converts raw pressure data from a storm drain in
+# Beaufort, NC to water level data. The water level data
+# are then drift-corrected. Drift-corrected water level data
+# are monitored, and any water level measurements above the road
+# elevation trigger email alerts using Mailchimp.
+
+# Github repo: https://github.com/SunnyD-Flood-Sensor-Network/SunnyD_monitor
+# Project data viewer: http://go.unc.edu/flood-data
+
+
 #-------- Setup ----------
 # Source env variables if working on desktop
 # source("/Users/adam/Documents/SunnyD/sunnyday_postgres_keys.R")
@@ -164,7 +176,7 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
     min_wl <- min_wl %>% 
       mutate(deriv = c(NA,diff(min_wl)),
              change_pt = ifelse(!is.na(deriv), ifelse(deriv != 0, T, F), F)) %>% 
-      filter(deriv < 0.1,
+      filter(#deriv < 0.1,
              date > min_date_x_somewhat_shorter)
     
     smoothed_min_wl <- tibble("date" = min_wl %>% filter(change_pt == T) %>% pull(date),
@@ -172,12 +184,23 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
                               "smoothed_min_wl" = loess(min_wl~as.numeric(date), data = min_wl %>% filter(change_pt == T))$fitted
     )
     
-    smoothed_wl_df <- min_wl %>%
-      left_join(smoothed_min_wl, by = "date") %>%
-      # mutate(smoothed_min_wl = approxfun(date, smoothed_min_wl)(date)) %>% 
-      tidyr::fill(smoothed_min_wl,.direction = "downup") %>%
-      dplyr::select(-c(deriv, change_pt)) %>% 
-      filter(date >= min_date_x_shorter)
+    if(sum(is.na(smoothed_min_wl$smoothed_min_wl)) != nrow(smoothed_min_wl)){
+      smoothed_wl_df <- min_wl %>%
+        left_join(smoothed_min_wl, by = "date") %>%
+        # mutate(smoothed_min_wl = approxfun(date, smoothed_min_wl)(date)) %>% 
+        tidyr::fill(smoothed_min_wl,.direction = "downup") %>%
+        dplyr::select(-c(deriv, change_pt)) %>% 
+        filter(date >= min_date_x_shorter)
+    }
+    
+    if(sum(is.na(smoothed_min_wl$smoothed_min_wl)) == nrow(smoothed_min_wl)){
+      smoothed_wl_df <- min_wl %>%
+        dplyr::select(-c(deriv, change_pt)) %>% 
+        filter(date >= min_date_x_shorter) %>% 
+        mutate(smoothed_min_wl = min_wl)
+    }
+    
+    smoothed_wl_df
     
   }
   
