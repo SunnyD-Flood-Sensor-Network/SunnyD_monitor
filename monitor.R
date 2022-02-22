@@ -296,7 +296,7 @@ detect_flooding <- function(x){
     
   return(last_measurement %>% 
            ungroup() %>% 
-           transmute(place, latest_measurement = date, current_time = current_time, is_flooding)
+           transmute(place, sensor_ID, latest_measurement = date, current_time = current_time, is_flooding)
          )
 }
 
@@ -636,13 +636,13 @@ alert_flooding <- function(x, latest_flooding_df, latest_not_flooding_df){
         send_new_alert(places[i])
       }
       
-      latest_flooding_df <<- dplyr::rows_upsert(latest_flooding_df, site_flooding_data, by = c("place"))
+      latest_flooding_df <<- dplyr::rows_upsert(latest_flooding_df, site_flooding_data, by = c("place", "sensor_ID"))
       
     }
     
     if(any_flooding == F){
       
-      latest_not_flooding_df <<- dplyr::rows_upsert(latest_not_flooding_df, site_data %>% slice(1), by = c("place"))
+      latest_not_flooding_df <<- dplyr::rows_upsert(latest_not_flooding_df, site_data %>% slice(1), by = c("place", "sensor_ID"))
       
     }
   }
