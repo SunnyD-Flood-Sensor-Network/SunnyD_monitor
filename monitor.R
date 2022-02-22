@@ -98,8 +98,8 @@ new_bern_atm <- function(begin_date, end_date) {
     httr::GET(
       url = paste0("https://api.weather.gov/stations/KEWN/observations"),
       query = list(
-        "start" = paste0(format(begin_date - hours(1), "%Y-%m-%dT%H:%M:%S+00:00")),
-        "end" = paste0(format(end_date +hours(1), "%Y-%m-%dT%H:%M:%S+00:00"))
+        # "start" = paste0(format(begin_date - hours(1), "%Y-%m-%dT%H:%M:%S+00:00")),
+        # "end" = paste0(format(end_date +hours(1), "%Y-%m-%dT%H:%M:%S+00:00"))
       ),
       add_headers(Accept= "application/geo+json")
     )
@@ -127,6 +127,40 @@ new_bern_atm <- function(begin_date, end_date) {
   return(latest_atm_pressure)
 }
 
+carolina_beach_atm <- function(begin_date, end_date) {
+  # Should return a tibble with columns: place | date | pressure_mb | notes
+  request <-
+    httr::GET(
+      url = paste0("https://api.weather.gov/stations/KSUT/observations"),
+      query = list(
+        # "start" = paste0(format(begin_date - hours(10), "%Y-%m-%dT%H:%M:%S+00:00")),
+        # "end" = paste0(format(end_date +hours(10), "%Y-%m-%dT%H:%M:%S+00:00"))
+      ),
+      add_headers(Accept= "application/geo+json")
+    )
+  
+  raw_nws_data <-
+    jsonlite::fromJSON(rawToChar(request$content))$features$properties
+  
+  timestamp <- lubridate::ymd_hms(raw_nws_data$timestamp)
+  
+  pressure <- raw_nws_data$barometricPressure$value/100
+  
+  latest_atm_pressure <- tibble::tibble(date = timestamp,
+                                        pressure_mb = pressure) %>% 
+    na.omit() %>% 
+    arrange(date)
+  
+  latest_atm_pressure <- latest_atm_pressure %>%
+    transmute(
+      place = "Carolina Beach, North Carolina",
+      date = date,
+      pressure_mb = pressure_mb,
+      notes = "NWS"
+    )
+  
+  return(latest_atm_pressure)
+}
 
 get_atm_pressure <- function(place, begin_date, end_date) {
   # Each location will have its own function called within this larger function
@@ -134,6 +168,8 @@ get_atm_pressure <- function(place, begin_date, end_date) {
          "Beaufort, North Carolina" = beaufort_atm(begin_date = begin_date,
                                                    end_date = end_date),
          "New Bern, North Carolina" = new_bern_atm(begin_date = begin_date,
+                                                   end_date = end_date),
+         "Carolina Beach, North Carolina" = carolina_beach_atm(begin_date = begin_date,
                                                    end_date = end_date)
   )
   
