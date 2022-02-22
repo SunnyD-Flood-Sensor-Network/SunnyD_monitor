@@ -209,6 +209,10 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
       tibble::tibble("sensor_ID" = sensor_list[j], "date" = the_date, "min_wl" = min_val)
     }
     
+    if(nrow(min_wl) < 2){
+      return()
+    }
+    
     min_wl <- min_wl %>% 
       mutate(deriv = c(NA,diff(min_wl)),
              change_pt = ifelse(!is.na(deriv), ifelse(deriv != 0, T, F), F)) %>% 
