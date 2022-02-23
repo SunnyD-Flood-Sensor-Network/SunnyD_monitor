@@ -164,12 +164,12 @@ carolina_beach_atm <- function(begin_date, end_date) {
 
 get_atm_pressure <- function(place, begin_date, end_date) {
   # Each location will have its own function called within this larger function
-  switch(place,
-         "Beaufort, North Carolina" = beaufort_atm(begin_date = begin_date,
+  switch(tolower(place),
+         "beaufort, north carolina" = beaufort_atm(begin_date = begin_date,
                                                    end_date = end_date),
-         "New Bern, North Carolina" = new_bern_atm(begin_date = begin_date,
+         "new bern, north carolina" = new_bern_atm(begin_date = begin_date,
                                                    end_date = end_date),
-         "Carolina Beach, North Carolina" = carolina_beach_atm(begin_date = begin_date,
+         "carolina beach, north carolina" = carolina_beach_atm(begin_date = begin_date,
                                                    end_date = end_date)
   )
   
@@ -219,10 +219,21 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
       filter(#deriv < 0.1,
              date > min_date_x_somewhat_shorter)
     
+    if(nrow(min_wl %>% filter(change_pt == T)) == 1){
+      return(
+        min_wl %>%
+          mutate(smoothed_min_wl = min_wl) %>% 
+          dplyr::select(-c(deriv, change_pt)) %>% 
+          filter(date >= min_date_x_shorter)
+      )
+    }
+    
     smoothed_min_wl <- tibble("date" = min_wl %>% filter(change_pt == T) %>% pull(date),
                               # "smoothed_min_wl" = MASS::rlm(min_wl~as.numeric(date), data = min_wl %>% filter(change_pt == T))$fitted
                               "smoothed_min_wl" = loess(min_wl~as.numeric(date), data = min_wl %>% filter(change_pt == T))$fitted
     )
+    
+   
     
     if(sum(is.na(smoothed_min_wl$smoothed_min_wl)) != nrow(smoothed_min_wl)){
       smoothed_wl_df <- min_wl %>%
@@ -653,7 +664,8 @@ monitor_function <- function(debug = T) {
   
   new_data <- raw_data %>% 
     filter(processed == F) %>% 
-    collect()
+    collect() %>% 
+    mutate(place = tolower(place))
   
   if(nrow(new_data) == 0){
     if (debug == T) {
@@ -720,11 +732,11 @@ monitor_function <- function(debug = T) {
       
       atm_tibble_bounds_data <- (min(pre_interpolated_data_filtered$date, na.rm=T) > min(atm_tibble$date, na.rm=T)) & (max(pre_interpolated_data_filtered$date, na.rm=T) < max(atm_tibble$date, na.rm=T))
       
-      if(nrow(atm_tibble) == 1 & selected_place_name == "Beaufort, North Carolina"){
+      if(nrow(atm_tibble) == 1 & selected_place_name == "beaufort, north carolina"){
         return(pre_interpolated_data_filtered %>% slice(0))
       }
       
-      if(!atm_tibble_bounds_data & selected_place_name == "New Bern, North Carolina"){
+      if(!atm_tibble_bounds_data & selected_place_name == "new bern, north carolina"){
         atm_tibble <- bind_rows(atm_tibble,
                                 atm_tibble %>% 
                                   filter(date == max(date, na.rm=T)) %>%
@@ -740,10 +752,11 @@ monitor_function <- function(debug = T) {
         cat("-",pre_interpolated_data_filtered %>% nrow(),"new rows", "\n")
         cat("- Date duration is",round(new_data_date_duration,digits = 2),"days", "\n")
         cat("-",(pre_interpolated_data_filtered %>% nrow())-(interpolated_data_filtered %>% nrow()),"new observation(s) filtered out b/c not within atm pressure date range","\n")
+        cat("#######################################")
       }
       
       processing_data <- interpolated_data_filtered %>%
-        left_join(sensor_locations %>% collect(), by = c("place", "sensor_ID")) %>% 
+        left_join(sensor_locations %>% collect() %>% mutate(place = tolower(place)), by = c("place", "sensor_ID")) %>% 
         transmute(
           place = place,
           sensor_ID = sensor_ID,
@@ -805,7 +818,7 @@ monitor_function <- function(debug = T) {
                        records = new_data %>% 
                          semi_join(interpolated_data, by = c("place","sensor_ID","date")) %>% 
                          mutate(processed = T),
-                       where_cols = c("place", "sensor_ID", "date")
+                       where_cols = c("sensor_ID", "date")
         )
         
         if (debug == T) {
