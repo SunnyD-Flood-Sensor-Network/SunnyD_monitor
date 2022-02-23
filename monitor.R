@@ -865,7 +865,7 @@ while(run ==T){
   
   if(flood_tracker == 0){
     # Extract flood events and write to Google Sheets if needed. Will send alerts
-    document_flood_events(processed_data_db = processed_data, write_to_sheet = T)
+    document_flood_events(processed_data_db = processed_data, write_to_sheet = F)
   }
   
   if(flood_tracker > 0){
