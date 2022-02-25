@@ -63,13 +63,15 @@ drift_corrected_data <- con %>%
 
 #------------------------ Functions to retrieve atm pressure -------------------
 
-beaufort_atm <- function(begin_date, end_date) {
+noaa_atm <- function(id, begin_date, end_date) {
   # Should return a tibble with columns: place | date | pressure_mb | notes
+  id = as.character(id)
+  
   request <-
     httr::GET(
       url = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter/",
       query = list(
-        "station" = "8656483",
+        "station" = id,
         "begin_date" = format(begin_date, "%Y%m%d %H:%M"),
         "end_date" = format(end_date, "%Y%m%d %H:%M"),
         "product" = "air_pressure",
@@ -87,7 +89,7 @@ beaufort_atm <- function(begin_date, end_date) {
   
   latest_atm_pressure <- latest_atm_pressure %>%
     transmute(
-      place = "Beaufort, North Carolina",
+      id = id,
       date = ymd_hm(date),
       pressure_mb = as.numeric(pressure_mb),
       notes = "coop"
@@ -95,11 +97,13 @@ beaufort_atm <- function(begin_date, end_date) {
   return(latest_atm_pressure)
 }
 
-new_bern_atm <- function(begin_date, end_date) {
+nws_atm <- function(id, begin_date, end_date) {
   # Should return a tibble with columns: place | date | pressure_mb | notes
+  id = as.character(id)
+  
   request <-
     httr::GET(
-      url = paste0("https://api.weather.gov/stations/KEWN/observations"),
+      url = paste0("https://api.weather.gov/stations/",id,"/observations"),
       query = list(
         "start" = paste0(format(begin_date - hours(1), "%Y-%m-%dT%H:%M:%S+00:00")),
         "end" = paste0(format(end_date +hours(1), "%Y-%m-%dT%H:%M:%S+00:00"))
@@ -121,7 +125,7 @@ new_bern_atm <- function(begin_date, end_date) {
   
   latest_atm_pressure <- latest_atm_pressure %>%
     transmute(
-      place = "New Bern, North Carolina",
+      id = id,
       date = date,
       pressure_mb = pressure_mb,
       notes = "NWS"
@@ -130,39 +134,147 @@ new_bern_atm <- function(begin_date, end_date) {
   return(latest_atm_pressure)
 }
 
+isu_atm <- function(id, begin_date, end_date){
+  id = as.character(id)
+  
+  weather_data <- riem::riem_measures(station = id,
+                      date_start = as_date(begin_date),
+                      date_end = as_date(end_date)
+                      )
+  
+  latest_atm_pressure <- weather_data %>%
+    transmute(
+      id = station,
+      date = valid,
+      pressure_mb = alti * 1000 * 0.0338639,
+      notes = "ISU"
+    )
+  
+  return(latest_atm_pressure)
+}
 
-get_atm_pressure <- function(place, begin_date, end_date) {
+
+get_atm_pressure <- function(atm_id, atm_src, begin_date, end_date) {
   # Each location will have its own function called within this larger function
-  switch(place,
-         "Beaufort, North Carolina" = beaufort_atm(begin_date = begin_date,
-                                                   end_date = end_date),
-         "New Bern, North Carolina" = new_bern_atm(begin_date = begin_date,
-                                                   end_date = end_date)
+  switch(atm_src,
+         "NOAA" = noaa_atm(id = atm_id,
+                           begin_date = begin_date,
+                           end_date = end_date),
+         "NWS" = nws_atm(id = atm_id,
+                         begin_date = begin_date,
+                         end_date = end_date),
+         "ISU" = isu_atm(id = atm_id,
+                         begin_date = begin_date,
+                         end_date = end_date)
   )
   
 }
 
+interpolate_atm_data <- function(data){
+  place_names <- unique(data$place)
+  
+  interpolated_data <- foreach(i = 1:length(place_names), .combine = "rbind") %do% {
+    
+    selected_place_name <- place_names[i]
+    
+    # select new data for each place
+    data_filtered <- data %>%
+      filter(place == selected_place_name)
+    
+    # extract the date range and duration
+    new_data_date_range <- c(min(data_filtered$date, na.rm=T)-minutes(30), max(data_filtered$date, na.rm=T)+minutes(30))
+    new_data_date_duration <- time_length(diff(new_data_date_range), unit = "days")
+    
+    if(new_data_date_duration >= 30){
+      chunks <- ceiling(new_data_date_duration / 30)
+      span <- duration(new_data_date_duration / chunks, units = "days")
+      
+      atm_tibble <- foreach(j = 1:chunks, .combine = "rbind") %do% {
+        range_min <- new_data_date_range[1] + (span * (j - 1))
+        range_max <- new_data_date_range[1] + (span * j)
+        
+        get_atm_pressure(atm_id = unique(data_filtered$atm_station_id)[1],
+                         atm_src = unique(data_filtered$atm_data_src)[1],
+                         begin_date = range_min,
+                         end_date = range_max)
+      }
+      
+      atm_tibble <- atm_tibble %>%
+        distinct(date, .keep_all=T)
+    }
+    
+    if(new_data_date_duration < 30){
+      # get atm pressure 
+      atm_tibble <- get_atm_pressure(atm_id = unique(data_filtered$atm_station_id)[1],
+                                     atm_src = unique(data_filtered$atm_data_src)[1],
+                                     begin_date = new_data_date_range[1],
+                                     end_date = new_data_date_range[2]) %>% 
+        distinct()
+      
+    }
+    
+    if(nrow(atm_tibble) <= 1){
+      return()
+    }
+    
+    atm_tibble_bounds_data <- (min(data_filtered$date, na.rm=T) > min(atm_tibble$date, na.rm=T)) & (max(data_filtered$date, na.rm=T) < max(atm_tibble$date, na.rm=T))
+    
+    interpolated_data_filtered <- data_filtered %>%
+      filter(date > min(atm_tibble$date, na.rm=T) & date < max(atm_tibble$date, na.rm=T)) %>%
+      mutate(pressure_mb = approxfun(atm_tibble$date, atm_tibble$pressure_mb)(date))
+    
+    if(debug == T) {
+      cat("- New raw data detected for:", selected_place_name, "\n")
+      cat("-",data_filtered %>% nrow(),"new rows", "\n")
+      cat("- Date duration is",round(new_data_date_duration,digits = 2),"days", "\n")
+      cat("-",(data_filtered %>% nrow())-(interpolated_data_filtered %>% nrow()),"new observation(s) filtered out b/c not within atm pressure date range","\n")
+      cat("#################################","\n")
+    }
+    
+    interpolated_data_filtered
+  }
+  
+  return(interpolated_data)
+}
+
 #---------- Functions to adjust for drift ------------------
 match_measurements_to_survey <- function(measurements, survey_data){
-  survey_dates <- unique(survey_data$date_surveyed) %>% sort(decreasing = F)
-  number_of_surveys <- length(survey_dates)
+  sites <- unique(measurements$sensor_ID)
   
-  if(number_of_surveys == 1){
-    return(measurements %>%
-             mutate(date_surveyed = ifelse(date >= survey_dates, survey_dates, NA)))
+  matched_measurements <- foreach(i = 1:length(sites), .combine = "bind_rows") %do% {
+    selected_site <- sites[i]
+  
+    selected_measurements <- measurements %>% 
+      filter(sensor_ID == selected_site)
+    
+    site_survey_data <- survey_data %>% 
+      filter(sensor_ID == selected_site)
+    
+    survey_dates <- unique(site_survey_data$date_surveyed) %>% sort(decreasing = F)
+    number_of_surveys <- length(survey_dates)
+    
+    if(min(measurements$date, na.rm=T) < min(survey_dates)){
+      warning("There are data that precede the survey dates!")
+    }
+    
+    if(number_of_surveys == 1){
+      selected_measurements_w_survey_date <- selected_measurements %>%
+               mutate(date_surveyed = ymd_hms(ifelse(date >= survey_dates,format(survey_dates, "%Y-%m-%d %H:%M:%S"), NA)))
+    }
+
+    if(number_of_surveys > 1){
+      selected_measurements_w_survey_date <- selected_measurements %>%
+        mutate(date_surveyed = ymd_hms(cut.POSIXt(date, breaks = c(survey_dates, Sys.time()))))
+    }
+    
+    selected_measurements_survey_merged <- selected_measurements_w_survey_date %>%
+      left_join(site_survey_data, by = c("place","sensor_ID","date_surveyed"))
+    
+    selected_measurements_survey_merged
   }
   
-  if(min(measurements$date, na.rm=T) < min(survey_dates)){
-    warning("There are data that precede the survey dates!")
-  }
+  return(matched_measurements)
   
-  measurements_w_survey_date <- measurements %>%
-    mutate(date_surveyed = ymd_hms(cut.POSIXt(date, breaks = c(survey_dates, Sys.time()))))
-  
-  measurements_survey_merged <- measurements_w_survey_date %>%
-    left_join(survey_data)
-  
-  return(measurements_survey_merged)
 }
 
 get_smooth_min_wl <- function(measurements){
@@ -674,103 +786,46 @@ monitor_function <- function(debug = T) {
   
   if(nrow(new_data) > 0){
     
+    # Get all of the unique sensor_IDs so we can match them with survey data. 
+    # The survey data contain information about where to pull atmospheric pressure data from
+    sensors_w_new_data <- unique(new_data$sensor_ID)
+    
+    # # Get all of the place names of the new data so we can iterate through
+    # place_names <- unique(new_data$place)
+    
     # Create a column for the atm pressure, fill it with NAs, remove any duplicated rows
+    # Match sensor_IDs with their survey data
     pre_interpolated_data <- new_data %>%
       dplyr::mutate("pressure_mb" = NA_real_) %>%
       group_by(place) %>%
       arrange(date) %>%
       distinct() %>%
-      ungroup()
+      ungroup() %>% 
+      match_measurements_to_survey(survey_data = sensor_surveys %>% 
+                                     filter(sensor_ID %in% !!sensors_w_new_data) %>% collect())
     
-    # Get all of the place names of the new data so we can iterate through
-    place_names <- unique(new_data$place)
     
-    # process atm data and new data for each place  
-    interpolated_data <- foreach(i = 1:length(place_names), .combine = "rbind") %do% {
-      
-      selected_place_name <- place_names[i]
-      
-      # select new data for each place
-      pre_interpolated_data_filtered <- pre_interpolated_data %>%
-        filter(place == selected_place_name)
-      
-      # extract the date range and duration
-      new_data_date_range <- c(min(pre_interpolated_data_filtered$date, na.rm=T)-minutes(30), max(pre_interpolated_data_filtered$date, na.rm=T)+minutes(30))
-      new_data_date_duration <- time_length(diff(new_data_date_range), unit = "days")
-      
-      if(new_data_date_duration >= 30){
-        chunks <- ceiling(new_data_date_duration / 30)
-        span <- duration(new_data_date_duration / chunks, units = "days")
-        
-        atm_tibble <- foreach(j = 1:chunks, .combine = "rbind") %do% {
-          range_min <- new_data_date_range[1] + (span * (j - 1))
-          range_max <- new_data_date_range[1] + (span * j)
-          
-          get_atm_pressure(place = selected_place_name,
-                           begin_date = range_min,
-                           end_date = range_max)
-        }
-        
-        atm_tibble <- atm_tibble %>%
-          distinct(date, .keep_all=T)
-      }
-      
-      if(new_data_date_duration < 30){
-        # get atm pressure from NOAA
-        atm_tibble <- get_atm_pressure(
-          place = selected_place_name,
-          begin_date = new_data_date_range[1],
-          end_date = new_data_date_range[2]
-        ) %>%
-          distinct()
-      }
-      
-      if(nrow(atm_tibble) == 0){
-        return()
-      }
-      
-      atm_tibble_bounds_data <- (min(pre_interpolated_data_filtered$date, na.rm=T) > min(atm_tibble$date, na.rm=T)) & (max(pre_interpolated_data_filtered$date, na.rm=T) < max(atm_tibble$date, na.rm=T))
-      
-      if(nrow(atm_tibble) == 1 & selected_place_name == "Beaufort, North Carolina"){
-        return(pre_interpolated_data_filtered %>% slice(0))
-      }
-      
-      if(!atm_tibble_bounds_data & selected_place_name == "New Bern, North Carolina"){
-        atm_tibble <- bind_rows(atm_tibble,
-                                atm_tibble %>%
-                                  filter(date == max(date, na.rm=T)) %>%
-                                  mutate(date =  max(pre_interpolated_data_filtered$date, na.rm=T) + minutes(10)))
-      }
-      
-      interpolated_data_filtered <- pre_interpolated_data_filtered %>%
-        filter(date > min(atm_tibble$date, na.rm=T) & date < max(atm_tibble$date, na.rm=T)) %>%
-        mutate(pressure_mb = approxfun(atm_tibble$date, atm_tibble$pressure_mb)(date))
-      
-      if(debug == T) {
-        cat("- New raw data detected for:", selected_place_name, "\n")
-        cat("-",pre_interpolated_data_filtered %>% nrow(),"new rows", "\n")
-        cat("- Date duration is",round(new_data_date_duration,digits = 2),"days", "\n")
-        cat("-",(pre_interpolated_data_filtered %>% nrow())-(interpolated_data_filtered %>% nrow()),"new observation(s) filtered out b/c not within atm pressure date range","\n")
-      }
-      
-      processing_data <- interpolated_data_filtered %>%
-        transmute(
-          place = place,
-          sensor_ID = sensor_ID,
-          date = date,
-          atm_pressure = pressure_mb,
-          sensor_pressure = ifelse(pressure < 500, pressure/10 * 68.9476, pressure),
-          voltage = voltage,
-          notes = notes.x
-        ) %>%
-        mutate(
-          sensor_water_depth = ((((sensor_pressure - atm_pressure) * 100
-          ) / (1020 * 9.81)) * 3.28084),
-          qa_qc_flag = F,
-          tag = "new_data"
-        )
-      
-      processing_data
+    interpolated_data <- interpolate_atm_data(data = pre_interpolated_data)
+    
+    processing_data <- interpolated_data %>%
+      transmute(
+        place,
+        sensor_ID,
+        date,
+        atm_pressure = pressure_mb,
+        sensor_pressure = ifelse(pressure < 500, pressure/10 * 68.9476, pressure),
+        voltage,
+        notes,
+        atm_data_src,
+        atm_station_id
+      ) %>%
+      mutate(
+        sensor_water_depth = ((((sensor_pressure - atm_pressure) * 100
+        ) / (1020 * 9.81)) * 3.28084),
+        qa_qc_flag = F,
+        tag = "new_data"
+      )
+    
       # # Removes any erroneous jumps in pressure - This can be moved to the drift-correction code
       # final_data <- processing_data %>%
       #   rbind(processed_data %>%
@@ -786,42 +841,33 @@ monitor_function <- function(debug = T) {
       #   dplyr::select(-c(tag,diff_lag, time_lag, diff_per_time_lag))
       #
       # final_data
-    }
     
-    if(is.null(interpolated_data)){
+    # If there is no interpolated_data, return nothing
+    if(is.null(processing_data) | nrow(processing_data) == 0){
       return(cat("No data to write \n"))
     }
     
-    if(!is.null(interpolated_data)){
-      if(nrow(interpolated_data) == 0){
-        cat("Only one atmospheric pressure value for Beaufort, North Carolina - cannot interpolate! \n")
-        return(cat("No data to write \n"))
-      }
-      
-      if(nrow(interpolated_data) > 0){
-        dbx::dbxUpsert(
-          conn = con,
-          table = "sensor_water_depth",
-          records = interpolated_data,
-          where_cols = c("place", "sensor_ID", "date"),
-          skip_existing = F
-        )
-        
-        dbx::dbxUpdate(conn = con,
-                       table="sensor_data",
-                       records = new_data %>%
-                         semi_join(interpolated_data, by = c("place","sensor_ID","date")) %>%
-                         mutate(processed = T),
-                       where_cols = c("place", "sensor_ID", "date")
-        )
-        
-        if (debug == T) {
-          cat("- Wrote to database!", "\n")
-        }
-      }
+    # If there are interpolated data to be written to the processed database, do so
+    dbx::dbxUpsert(
+      conn = con,
+      table = "sensor_water_depth",
+      records = processing_data,
+      where_cols = c("place", "sensor_ID", "date"),
+      skip_existing = F
+    )
+    
+    dbx::dbxUpdate(
+      conn = con,
+      table="sensor_data",
+      records = new_data %>%
+        semi_join(processing_data, by = c("place","sensor_ID","date")) %>%
+        mutate(processed = T),
+      where_cols = c("place", "sensor_ID", "date")
+      )
+    
+    if (debug == T) {
+      cat("- Wrote to database!", "\n")
     }
-    
-    
   }
 }
 
@@ -839,12 +885,12 @@ googlesheets4::gs4_auth(token = googledrive::drive_token())
 run = T
 flood_tracker = 0
 
-last_time <- water_depth %>%
+last_time <- processed_data %>%
   slice_max(order_by = date, n=1) %>%
   pull(date)
 
-latest_flooding_df <- detect_flooding(adjust_wl(processed_data_db = water_depth, time = last_time) %>% group_by(place) %>% slice_head(n=5))
-latest_not_flooding_df <- detect_flooding(adjust_wl(processed_data_db = water_depth, time = last_time) %>% group_by(place) %>% slice_tail(n=5))
+latest_flooding_df <- detect_flooding(adjust_wl(processed_data_db = processed_data, time = last_time) %>% group_by(sensor_ID) %>% slice_head(n=5))
+latest_not_flooding_df <- detect_flooding(adjust_wl(processed_data_db = processed_data, time = last_time) %>% group_by(sensor_ID) %>% slice_tail(n=5))
 
 while(run ==T){
   start_time <- Sys.time()
@@ -859,7 +905,7 @@ while(run ==T){
   
   if(flood_tracker == 0){
     # Extract flood events and write to Google Sheets if needed. Will send alerts
-    document_flood_events(processed_data_db = processed_data, write_to_sheet = T)
+    document_flood_events(processed_data_db = processed_data, write_to_sheet = F)
   }
   
   if(flood_tracker > 0){
@@ -874,3 +920,35 @@ while(run ==T){
   
   Sys.sleep((60*6) - delay)
 }
+
+#--------------- populating the new databases -----------------
+raw_data_collected <- raw_data %>%
+  collect()
+
+old_processed_data <- con %>% 
+  tbl("sensor_data_processed") %>% 
+  collect()
+
+new_processed_data <- con %>% 
+  tbl("sensor_water_depth") %>% 
+  collect()
+
+new_colnames <- new_processed_data %>% colnames()
+
+missing_processed_data <- old_processed_data[!old_processed_data$date %in% new_processed_data$date,]
+
+missing_processed_data <- missing_processed_data %>% 
+  mutate(tag = "new_data",
+         atm_data_src = NA,
+         atm_station_id = NA,
+         sensor_water_depth = ((((sensor_pressure - atm_pressure) * 100
+         ) / (1020 * 9.81)) * 3.28084)) %>% 
+  dplyr::select(new_colnames)
+
+dbx::dbxUpsert(
+  conn = con,
+  table = "sensor_water_depth",
+  records = missing_processed_data,
+  where_cols = c("place", "sensor_ID", "date"),
+  skip_existing = F
+)
