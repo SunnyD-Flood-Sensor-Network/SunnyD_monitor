@@ -156,7 +156,7 @@ isu_atm <- function(id, begin_date, end_date){
 
 get_atm_pressure <- function(atm_id, atm_src, begin_date, end_date) {
   # Each location will have its own function called within this larger function
-  switch(atm_src,
+  switch(toupper(atm_src),
          "NOAA" = noaa_atm(id = atm_id,
                            begin_date = begin_date,
                            end_date = end_date),
@@ -357,6 +357,10 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
       collect() %>%
       arrange(desc(date_surveyed))
     
+    if(nrow(sensor_surveys_collected) == 0){
+      return()
+    }
+    
     site_db_df_collected_min_wl <- match_measurements_to_survey(measurements = site_db_df_collected,
                                                                 survey_data = sensor_surveys_collected) %>%
       get_smooth_min_wl()
@@ -419,7 +423,7 @@ detect_flooding <- function(x){
   
   return(last_measurement %>%
            ungroup() %>%
-           transmute(place, latest_measurement = date, current_time = current_time, is_flooding)
+           transmute(place, sensor_ID, latest_measurement = date, current_time = current_time, is_flooding)
   )
 }
 
@@ -516,6 +520,8 @@ document_flood_events <- function(time = Sys.time() %>% with_tz(tzone = "UTC"), 
                  records = adjusted_wl,
                  where_cols = c("place","sensor_ID","date")
   )
+  
+  cat("Wrote drift-corrected data!", "\n")
   
   alert_flooding(x = adjusted_wl, latest_flooding_df = latest_flooding_df, latest_not_flooding_df = latest_not_flooding_df)
   
@@ -759,13 +765,13 @@ alert_flooding <- function(x, latest_flooding_df, latest_not_flooding_df){
         send_new_alert(places[i])
       }
       
-      latest_flooding_df <<- dplyr::rows_upsert(latest_flooding_df, site_flooding_data, by = c("place"))
+      latest_flooding_df <<- dplyr::rows_upsert(latest_flooding_df, site_flooding_data, by = c("place", "sensor_ID"))
       
     }
     
     if(any_flooding == F){
       
-      latest_not_flooding_df <<- dplyr::rows_upsert(latest_not_flooding_df, site_data %>% slice(1), by = c("place"))
+      latest_not_flooding_df <<- dplyr::rows_upsert(latest_not_flooding_df, site_data %>% slice(1), by = c("place", "sensor_ID"))
       
     }
   }
@@ -802,7 +808,9 @@ monitor_function <- function(debug = T) {
       distinct() %>%
       ungroup() %>% 
       match_measurements_to_survey(survey_data = sensor_surveys %>% 
-                                     filter(sensor_ID %in% !!sensors_w_new_data) %>% collect())
+                                     filter(sensor_ID %in% !!sensors_w_new_data) %>% collect()) %>% 
+      mutate(notes = notes.x) %>% 
+      dplyr::select(-c("notes.x", "notes.y"))
     
     
     interpolated_data <- interpolate_atm_data(data = pre_interpolated_data)
@@ -856,14 +864,14 @@ monitor_function <- function(debug = T) {
       skip_existing = F
     )
     
-    dbx::dbxUpdate(
-      conn = con,
-      table="sensor_data",
-      records = new_data %>%
-        semi_join(processing_data, by = c("place","sensor_ID","date")) %>%
-        mutate(processed = T),
-      where_cols = c("place", "sensor_ID", "date")
-      )
+    # dbx::dbxUpdate(
+    #   conn = con,
+    #   table="sensor_data",
+    #   records = new_data %>%
+    #     semi_join(processing_data, by = c("place","sensor_ID","date")) %>%
+    #     mutate(processed = T),
+    #   where_cols = c("place", "sensor_ID", "date")
+    #   )
     
     if (debug == T) {
       cat("- Wrote to database!", "\n")
@@ -905,7 +913,7 @@ while(run ==T){
   
   if(flood_tracker == 0){
     # Extract flood events and write to Google Sheets if needed. Will send alerts
-    document_flood_events(processed_data_db = processed_data, write_to_sheet = F)
+    document_flood_events(processed_data_db = processed_data, write_to_sheet = T)
   }
   
   if(flood_tracker > 0){
@@ -918,37 +926,6 @@ while(run ==T){
   # Wait to make the delay 6 minutes
   delay <- difftime(Sys.time(),start_time, units = "secs")
   
-  Sys.sleep((60*6) - delay)
+  Sys.sleep((60*2) - delay)
 }
 
-#--------------- populating the new databases -----------------
-raw_data_collected <- raw_data %>%
-  collect()
-
-old_processed_data <- con %>% 
-  tbl("sensor_data_processed") %>% 
-  collect()
-
-new_processed_data <- con %>% 
-  tbl("sensor_water_depth") %>% 
-  collect()
-
-new_colnames <- new_processed_data %>% colnames()
-
-missing_processed_data <- old_processed_data[!old_processed_data$date %in% new_processed_data$date,]
-
-missing_processed_data <- missing_processed_data %>% 
-  mutate(tag = "new_data",
-         atm_data_src = NA,
-         atm_station_id = NA,
-         sensor_water_depth = ((((sensor_pressure - atm_pressure) * 100
-         ) / (1020 * 9.81)) * 3.28084)) %>% 
-  dplyr::select(new_colnames)
-
-dbx::dbxUpsert(
-  conn = con,
-  table = "sensor_water_depth",
-  records = missing_processed_data,
-  where_cols = c("place", "sensor_ID", "date"),
-  skip_existing = F
-)
