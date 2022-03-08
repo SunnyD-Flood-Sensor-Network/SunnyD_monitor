@@ -191,7 +191,9 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
     return(cat("No processed data over past 2 weeks available to adjust"))
   }
   
-  sensor_list <- unique(db_df_collected$sensor_ID)
+  sensor_list <- unique(db_df_collected %>% 
+                          filter(sensor_ID != "CB_02") %>% 
+                          pull(sensor_ID))
   
   aggregate_smooth_wl <- foreach(j = 1:length(sensor_list), .combine = "bind_rows") %do% {
     
