@@ -864,14 +864,14 @@ monitor_function <- function(debug = T) {
       skip_existing = F
     )
     
-    # dbx::dbxUpdate(
-    #   conn = con,
-    #   table="sensor_data",
-    #   records = new_data %>%
-    #     semi_join(processing_data, by = c("place","sensor_ID","date")) %>%
-    #     mutate(processed = T),
-    #   where_cols = c("place", "sensor_ID", "date")
-    #   )
+    dbx::dbxUpdate(
+      conn = con,
+      table="sensor_data",
+      records = new_data %>%
+        semi_join(processing_data, by = c("place","sensor_ID","date")) %>%
+        mutate(processed = T),
+      where_cols = c("place", "sensor_ID", "date")
+      )
     
     if (debug == T) {
       cat("- Wrote to database!", "\n")
