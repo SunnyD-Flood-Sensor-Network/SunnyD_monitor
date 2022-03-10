@@ -61,6 +61,9 @@ processed_data <- con %>%
 drift_corrected_data <- con %>%
   tbl("data_for_display")
 
+drift_corrected_data <- con %>% 
+  tbl("sensor_data_drift_corrected")
+
 #------------------------ Functions to retrieve atm pressure -------------------
 
 noaa_atm <- function(id, begin_date, end_date) {
@@ -97,6 +100,7 @@ noaa_atm <- function(id, begin_date, end_date) {
   return(latest_atm_pressure)
 }
 
+
 nws_atm <- function(id, begin_date, end_date) {
   # Should return a tibble with columns: place | date | pressure_mb | notes
   id = as.character(id)
@@ -121,6 +125,7 @@ nws_atm <- function(id, begin_date, end_date) {
   latest_atm_pressure <- tibble::tibble(date = timestamp,
                                         pressure_mb = pressure) %>%
     na.omit() %>%
+
     arrange(date)
   
   latest_atm_pressure <- latest_atm_pressure %>%
@@ -133,6 +138,7 @@ nws_atm <- function(id, begin_date, end_date) {
   
   return(latest_atm_pressure)
 }
+
 
 isu_atm <- function(id, begin_date, end_date){
   id = as.character(id)
@@ -152,7 +158,6 @@ isu_atm <- function(id, begin_date, end_date){
   
   return(latest_atm_pressure)
 }
-
 
 get_atm_pressure <- function(atm_id, atm_src, begin_date, end_date) {
   # Each location will have its own function called within this larger function
@@ -330,6 +335,7 @@ get_smooth_min_wl <- function(measurements){
   }
 }
 
+#---------- Functions to adjust for drift ------------------
 adjust_wl <- function(time = Sys.time(), processed_data_db){
   
   min_date_x <-  time - days(14)
@@ -345,6 +351,7 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
     return(cat("No processed data over past 2 weeks available to adjust"))
   }
   
+
   sensor_list <- unique(db_df_collected$sensor_ID)
   
   aggregate_smooth_wl <- foreach(j = 1:length(sensor_list), .combine = "bind_rows") %do% {
@@ -430,6 +437,7 @@ detect_flooding <- function(x){
 
 
 is_flooding_ongoing <- function(x, lag_hrs = 4){
+
   latest_flood <- x %>%
     filter(flood_event == max(flood_event, na.rm=T)) %>%
     filter(date == max(date, na.rm=T))
@@ -449,18 +457,21 @@ find_flood_events <- function(x, existing_flood_events, flood_cutoff = 0){
   
   last_flood_number <- ifelse(nrow(existing_flood_events) > 0, max(existing_flood_events$flood_event, na.rm=T), 0)
   
+
   flooded_measurements <- x %>%
     filter(road_water_level_adj >= flood_cutoff) %>%
     mutate(min_date = date - minutes(1),
            max_date = date + minutes(1)) %>%
     dplyr::select(place, sensor_ID, date, road_water_level_adj, road_water_level, drift, voltage, min_date, max_date)
   
+
   start_stop_flood_events <- existing_flood_events %>%
     group_by(place, sensor_ID, flood_event) %>%
     summarize(min_date = min(date, na.rm=T) - minutes(30),
               max_date = max(date, na.rm=T) + minutes(30),
               .groups = "keep")
   
+
   existing_storm_intervals <- start_stop_flood_events %>%
     mutate(intervals = interval(start = min_date, end = max_date))
   
@@ -873,9 +884,36 @@ monitor_function <- function(debug = T) {
       where_cols = c("place", "sensor_ID", "date")
       )
     
-    if (debug == T) {
-      cat("- Wrote to database!", "\n")
+    if(!is.null(interpolated_data)){
+      if(nrow(interpolated_data) == 0){
+        cat("Only one atmospheric pressure value for Beaufort, North Carolina - cannot interpolate! \n")
+        return(cat("No data to write \n"))
+      }
+      
+      if(nrow(interpolated_data) > 0){
+        dbx::dbxUpsert(
+          conn = con,
+          table = "sensor_data_processed",
+          records = interpolated_data,
+          where_cols = c("place", "sensor_ID", "date"),
+          skip_existing = F
+        )
+        
+        dbx::dbxUpdate(conn = con,
+                       table="sensor_data",
+                       records = new_data %>% 
+                         semi_join(interpolated_data, by = c("place","sensor_ID","date")) %>% 
+                         mutate(processed = T),
+                       where_cols = c("sensor_ID", "date")
+        )
+        
+        if (debug == T) {
+          cat("- Wrote to database!", "\n")
+        }
+      }
     }
+    
+    
   }
 }
 
