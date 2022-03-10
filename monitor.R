@@ -17,6 +17,7 @@ library(stringr)
 library(jsonlite)
 library(crul)
 library(MASS)
+library(riem)
 
 
 #-------- Description --------------
