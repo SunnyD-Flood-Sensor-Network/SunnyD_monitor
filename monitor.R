@@ -45,10 +45,6 @@ con <- dbPool(
   user = Sys.getenv("POSTGRESQL_USER")
 )
 
-# Connect to sensor location table
-sensor_locations <- con %>%
-  tbl("sensor_locations")
-
 sensor_surveys <- con %>%
   tbl("sensor_surveys")
 
@@ -61,9 +57,6 @@ processed_data <- con %>%
 
 drift_corrected_data <- con %>%
   tbl("data_for_display")
-
-drift_corrected_data <- con %>% 
-  tbl("sensor_data_drift_corrected")
 
 #------------------------ Functions to retrieve atm pressure -------------------
 
@@ -885,36 +878,9 @@ monitor_function <- function(debug = T) {
       where_cols = c("place", "sensor_ID", "date")
       )
     
-    if(!is.null(interpolated_data)){
-      if(nrow(interpolated_data) == 0){
-        cat("Only one atmospheric pressure value for Beaufort, North Carolina - cannot interpolate! \n")
-        return(cat("No data to write \n"))
-      }
-      
-      if(nrow(interpolated_data) > 0){
-        dbx::dbxUpsert(
-          conn = con,
-          table = "sensor_data_processed",
-          records = interpolated_data,
-          where_cols = c("place", "sensor_ID", "date"),
-          skip_existing = F
-        )
-        
-        dbx::dbxUpdate(conn = con,
-                       table="sensor_data",
-                       records = new_data %>% 
-                         semi_join(interpolated_data, by = c("place","sensor_ID","date")) %>% 
-                         mutate(processed = T),
-                       where_cols = c("sensor_ID", "date")
-        )
-        
-        if (debug == T) {
-          cat("- Wrote to database!", "\n")
-        }
-      }
+    if (debug == T) {
+      cat("- Wrote to database!", "\n")
     }
-    
-    
   }
 }
 
