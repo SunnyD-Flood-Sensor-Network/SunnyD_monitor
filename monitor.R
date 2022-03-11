@@ -175,15 +175,15 @@ interpolate_atm_data <- function(data){
   interpolated_data <- foreach(i = 1:length(place_names), .combine = "rbind") %do% {
     
     selected_place_name <- place_names[i]
-    
+    print(selected_place_name)
     # select new data for each place
     data_filtered <- data %>%
       dplyr::filter(place == selected_place_name)
-    
+    print(data_filtered)
     # extract the date range and duration
     new_data_date_range <- c(min(data_filtered$date, na.rm=T)-minutes(30), max(data_filtered$date, na.rm=T)+minutes(30))
     new_data_date_duration <- lubridate::time_length(diff(new_data_date_range), unit = "days")
-    
+    print(data_date_duration)
     if(new_data_date_duration >= 30){
       chunks <- ceiling(new_data_date_duration / 30)
       span <- lubridate::duration(new_data_date_duration / chunks, units = "days")
@@ -209,6 +209,7 @@ interpolate_atm_data <- function(data){
                                      begin_date = new_data_date_range[1],
                                      end_date = new_data_date_range[2]) %>% 
         distinct()
+      print(atm_tibble)
       
     }
     
@@ -217,7 +218,7 @@ interpolate_atm_data <- function(data){
     }
     
     atm_tibble_bounds_data <- (min(data_filtered$date, na.rm=T) > min(atm_tibble$date, na.rm=T)) & (max(data_filtered$date, na.rm=T) < max(atm_tibble$date, na.rm=T))
-    
+    print(atm_tibble_bounds_data)
     interpolated_data_filtered <- data_filtered %>%
       filter(date > min(atm_tibble$date, na.rm=T) & date < max(atm_tibble$date, na.rm=T)) %>%
       mutate(pressure_mb = approxfun(atm_tibble$date, atm_tibble$pressure_mb)(date))
