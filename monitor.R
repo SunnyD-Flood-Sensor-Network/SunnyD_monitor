@@ -220,9 +220,10 @@ interpolate_atm_data <- function(data){
     atm_tibble_bounds_data <- (min(data_filtered$date, na.rm=T) > min(atm_tibble$date, na.rm=T)) & (max(data_filtered$date, na.rm=T) < max(atm_tibble$date, na.rm=T))
     print(atm_tibble_bounds_data)
     interpolated_data_filtered <- data_filtered %>%
-      filter(date > min(atm_tibble$date, na.rm=T) & date < max(atm_tibble$date, na.rm=T)) %>%
+      filter(date > min(atm_tibble$date, na.rm=T)) %>% 
+      filter(date < max(atm_tibble$date, na.rm=T)) %>%
       mutate(pressure_mb = approxfun(atm_tibble$date, atm_tibble$pressure_mb)(date))
-    
+    print(interpolated_data_filtered)
     if(debug == T) {
       cat("- New raw data detected for:", selected_place_name, "\n")
       cat("-",data_filtered %>% nrow(),"new rows", "\n")
