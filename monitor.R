@@ -169,26 +169,26 @@ get_atm_pressure <- function(atm_id, atm_src, begin_date, end_date) {
   
 }
 
-interpolate_atm_data <- function(data){
+interpolate_atm_data <- function(data, debug = T){
   place_names <- unique(data$place)
   
-  interpolated_data <- foreach(i = 1:length(place_names), .combine = "rbind") %do% {
+  interpolated_data <- foreach(i = 1:length(place_names), .combine = "bind_rows") %do% {
     
     selected_place_name <- place_names[i]
-    print(selected_place_name)
+    
     # select new data for each place
     data_filtered <- data %>%
       dplyr::filter(place == selected_place_name)
-    print(data_filtered)
+    
     # extract the date range and duration
     new_data_date_range <- c(min(data_filtered$date, na.rm=T)-minutes(30), max(data_filtered$date, na.rm=T)+minutes(30))
     new_data_date_duration <- lubridate::time_length(diff(new_data_date_range), unit = "days")
-    print(new_data_date_duration)
+    
     if(new_data_date_duration >= 30){
       chunks <- ceiling(new_data_date_duration / 30)
       span <- lubridate::duration(new_data_date_duration / chunks, units = "days")
       
-      atm_tibble <- foreach(j = 1:chunks, .combine = "rbind") %do% {
+      atm_tibble <- foreach(j = 1:chunks, .combine = "bind_rows") %do% {
         range_min <- new_data_date_range[1] + (span * (j - 1))
         range_max <- new_data_date_range[1] + (span * j)
         
@@ -209,7 +209,6 @@ interpolate_atm_data <- function(data){
                                      begin_date = new_data_date_range[1],
                                      end_date = new_data_date_range[2]) %>% 
         distinct()
-      print(atm_tibble)
       
     }
     
@@ -218,12 +217,12 @@ interpolate_atm_data <- function(data){
     }
     
     atm_tibble_bounds_data <- (min(data_filtered$date, na.rm=T) > min(atm_tibble$date, na.rm=T)) & (max(data_filtered$date, na.rm=T) < max(atm_tibble$date, na.rm=T))
-    print(atm_tibble_bounds_data)
+    
     interpolated_data_filtered <- data_filtered %>%
       filter(date > min(atm_tibble$date, na.rm=T)) %>% 
       filter(date < max(atm_tibble$date, na.rm=T)) %>%
       mutate(pressure_mb = approxfun(atm_tibble$date, atm_tibble$pressure_mb)(date))
-    print(interpolated_data_filtered)
+    
     if(debug == T) {
       cat("- New raw data detected for:", selected_place_name, "\n")
       cat("-",data_filtered %>% nrow(),"new rows", "\n")
@@ -305,14 +304,16 @@ get_smooth_min_wl <- function(measurements){
                                 ifelse(!is.na(deriv), ifelse(deriv != 0, T, F), F)))
     
     z_chng_pts <- z %>%
-      filter(change_pt == T & (min_water_depth >= quantile(min_water_depth, 0.25) & min_water_depth <= quantile(min_water_depth, 0.75)))
+      filter(change_pt == T & (min_water_depth >= quantile(min_water_depth, 0.25) & min_water_depth <= quantile(min_water_depth, 0.75))) %>% 
+      dplyr::select(place, sensor_ID, date, min_water_depth)
     
     if(nrow(z_chng_pts) < 3){
       return(
         z %>%
           left_join(z_chng_pts %>%
-                      mutate(smoothed_min_water_depth = min_water_depth)) %>%
-          tidyr::fill(smoothed_min_water_depth,.direction = "downup")
+                      mutate(smoothed_min_water_depth = min_water_depth),
+                    by = c("place","sensor_ID","date","min_water_depth")) %>%
+          tidyr::fill(smoothed_min_water_depth,.direction = "downup") 
         
       )
     }
@@ -321,8 +322,10 @@ get_smooth_min_wl <- function(measurements){
       return(
         z %>%
           left_join(z_chng_pts %>%
-                      mutate(smoothed_min_water_depth = loess(min_water_depth~as.numeric(date), data = .)$fitted)) %>%
-          tidyr::fill(smoothed_min_water_depth,.direction = "downup")
+                      mutate(smoothed_min_water_depth = loess(min_water_depth~as.numeric(date), data = .)$fitted),
+                    by = c("place","sensor_ID","date","min_water_depth")) %>%
+          tidyr::fill(smoothed_min_water_depth,.direction = "downup") 
+        
       )
     }
     
@@ -370,9 +373,8 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
     
   }
   
-  # Left off here, need to calculate water level from smoothed_min_water_depth calc!
   adjusted_df <- db_df_collected %>%
-    left_join(aggregate_smooth_wl) %>%
+    left_join(aggregate_smooth_wl, by = c("place", "sensor_ID", "date", "atm_pressure", "sensor_pressure", "voltage", "sensor_water_depth", "qa_qc_flag", "tag")) %>%
     mutate(sensor_water_level = sensor_elevation + sensor_water_depth,
            road_water_level = sensor_water_level - road_elevation,
            road_water_level_adj = road_water_level - smoothed_min_water_depth,
@@ -820,7 +822,7 @@ monitor_function <- function(debug = T) {
       dplyr::select(-c("notes.x", "notes.y"))
     
     
-    interpolated_data <- interpolate_atm_data(data = pre_interpolated_data)
+    interpolated_data <- interpolate_atm_data(data = pre_interpolated_data, debug = debug)
     
     processing_data <- interpolated_data %>%
       transmute(
