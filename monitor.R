@@ -178,15 +178,15 @@ interpolate_atm_data <- function(data){
     
     # select new data for each place
     data_filtered <- data %>%
-      filter(place == selected_place_name)
+      dplyr::filter(place == selected_place_name)
     
     # extract the date range and duration
     new_data_date_range <- c(min(data_filtered$date, na.rm=T)-minutes(30), max(data_filtered$date, na.rm=T)+minutes(30))
-    new_data_date_duration <- time_length(diff(new_data_date_range), unit = "days")
+    new_data_date_duration <- lubridate::time_length(diff(new_data_date_range), unit = "days")
     
     if(new_data_date_duration >= 30){
       chunks <- ceiling(new_data_date_duration / 30)
-      span <- duration(new_data_date_duration / chunks, units = "days")
+      span <- lubridate::duration(new_data_date_duration / chunks, units = "days")
       
       atm_tibble <- foreach(j = 1:chunks, .combine = "rbind") %do% {
         range_min <- new_data_date_range[1] + (span * (j - 1))
@@ -199,7 +199,7 @@ interpolate_atm_data <- function(data){
       }
       
       atm_tibble <- atm_tibble %>%
-        distinct(date, .keep_all=T)
+        dplyr::distinct(date, .keep_all=T)
     }
     
     if(new_data_date_duration < 30){

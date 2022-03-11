@@ -116,7 +116,9 @@ number_of_iterations <- difftime(max_date, min_date, units = "days") %>%
 data_for_display_collected <- drift_corrected_data %>% 
   collect()
 
-for(i in 1:(number_of_iterations+1)){
+# for(i in 1:(number_of_iterations+1)){
+for(i in 245:(254+1)){
+    
   cat(i, "\n")
   
   adjusted_wl <- adjust_wl(time = min_date + days(i - 1), 
@@ -133,7 +135,7 @@ data_for_display_collected <- data_for_display_collected %>%
 
 dbx::dbxUpsert(conn = con,
                table = "data_for_display",
-               records = data_for_display_collected[25000:nrow(data_for_display_collected),],
+               records = data_for_display_collected[30000:nrow(data_for_display_collected),],
                where_cols = c("place","sensor_ID","date")
 )
 
