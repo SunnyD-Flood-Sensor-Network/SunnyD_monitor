@@ -183,7 +183,7 @@ interpolate_atm_data <- function(data){
     # extract the date range and duration
     new_data_date_range <- c(min(data_filtered$date, na.rm=T)-minutes(30), max(data_filtered$date, na.rm=T)+minutes(30))
     new_data_date_duration <- lubridate::time_length(diff(new_data_date_range), unit = "days")
-    print(data_date_duration)
+    print(new_data_date_duration)
     if(new_data_date_duration >= 30){
       chunks <- ceiling(new_data_date_duration / 30)
       span <- lubridate::duration(new_data_date_duration / chunks, units = "days")
