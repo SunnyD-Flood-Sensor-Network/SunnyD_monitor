@@ -935,6 +935,6 @@ while(run ==T){
   # Wait to make the delay 6 minutes
   delay <- difftime(Sys.time(),start_time, units = "secs")
   
-  Sys.sleep((60*2) - delay)
+  Sys.sleep((60*6) - delay)
 }
 
