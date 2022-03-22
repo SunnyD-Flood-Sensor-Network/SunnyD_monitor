@@ -345,7 +345,7 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
   db_df_collected <- processed_data_db %>%
     filter(date >= min_date_x & date <= max_date_x) %>%
     collect() %>% 
-    mutate(diff_lag = road_water_level - lag(road_water_level),
+    mutate(diff_lag = sensor_water_depth - lag(sensor_water_depth),
            time_lag = lubridate::time_length(date-lag(date), unit = "minute"),
            diff_per_time_lag = diff_lag/time_lag,
            qa_qc_flag = ifelse(is.na(diff_per_time_lag), F, ifelse((diff_per_time_lag >= abs(.1)) , T, F))
