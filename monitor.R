@@ -344,7 +344,13 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
   
   db_df_collected <- processed_data_db %>%
     filter(date >= min_date_x & date <= max_date_x) %>%
-    collect()
+    collect() %>% 
+    mutate(diff_lag = road_water_level - lag(road_water_level),
+           time_lag = lubridate::time_length(date-lag(date), unit = "minute"),
+           diff_per_time_lag = diff_lag/time_lag,
+           qa_qc_flag = ifelse(is.na(diff_per_time_lag), F, ifelse((diff_per_time_lag >= abs(.1)) , T, F))
+    ) %>% 
+    filter(qa_qc_flag == F)
   
   if(nrow(db_df_collected) == 0){
     return(cat("No processed data over past 2 weeks available to adjust"))
@@ -521,8 +527,22 @@ find_flood_events <- function(x, existing_flood_events, flood_cutoff = 0){
 
 document_flood_events <- function(time = Sys.time() %>% with_tz(tzone = "UTC"), processed_data_db, write_to_sheet){
   # correct for drift
-  adjusted_wl <- adjust_wl(time = time, processed_data_db = processed_data_db %>%
-                             filter(qa_qc_flag == F))
+  adjusted_wl <- adjust_wl(time = time, processed_data_db = processed_data_db)
+  
+  # final_data <- processing_data %>%
+  #   rbind(processed_data %>%
+  #           filter(date >= !!new_data_date_range[1] & date <= !!new_data_date_range[2]) %>%
+  #           collect() %>%
+  #           mutate(tag = "processed_data")) %>%
+  #   mutate(diff_lag = sensor_water_level - lag(sensor_water_level),
+  #          time_lag = time_length(date - lag(date), unit = "minute"),
+  #          diff_per_time_lag = diff_lag/time_lag,
+  #          qa_qc_flag = ifelse(is.na(diff_per_time_lag), F, ifelse((diff_per_time_lag >= abs(.1)) , T, F))
+  #          ) %>%
+  #   filter(tag == "new_data") %>%
+  #   dplyr::select(-c(tag,diff_lag, time_lag, diff_per_time_lag))
+  #
+  # final_data
   
   dbx::dbxUpsert(conn = con,
                  table = "data_for_display",
@@ -760,13 +780,19 @@ alert_flooding <- function(x, latest_flooding_df, latest_not_flooding_df){
         filter(is_flooding == T) %>%
         filter(latest_measurement == min(latest_measurement, na.rm=T))
       
+      cat(site_flooding_data)
+      
       latest_flood <- latest_flooding_df %>%
         filter(place == places[i]) %>%
         pull(latest_measurement)
       
+      cat("Latest flood:",latest_flood,"\n")
+      
       latest_not_flood <- latest_not_flooding_df %>%
         filter(place == places[i]) %>%
         pull(latest_measurement)
+      
+      cat("Latest NOT flood:",latest_not_flood,"\n")
       
       if((latest_not_flood > latest_flood) & (site_flooding_data %>%
                                               pull(latest_measurement) > latest_not_flood)){
@@ -791,7 +817,9 @@ monitor_function <- function(debug = T) {
   
   new_data <- raw_data %>%
     filter(processed == F) %>%
-    collect()
+    collect() %>% 
+    mutate(place = tools::toTitleCase(place),
+           sensor_ID = toupper(sensor_ID))
   
   if(nrow(new_data) == 0){
     if (debug == T) {
@@ -843,21 +871,6 @@ monitor_function <- function(debug = T) {
         tag = "new_data"
       )
     
-      # # Removes any erroneous jumps in pressure - This can be moved to the drift-correction code
-      # final_data <- processing_data %>%
-      #   rbind(processed_data %>%
-      #           filter(date >= !!new_data_date_range[1] & date <= !!new_data_date_range[2]) %>%
-      #           collect() %>%
-      #           mutate(tag = "processed_data")) %>%
-      #   mutate(diff_lag = sensor_water_level - lag(sensor_water_level),
-      #          time_lag = time_length(date - lag(date), unit = "minute"),
-      #          diff_per_time_lag = diff_lag/time_lag,
-      #          qa_qc_flag = ifelse(is.na(diff_per_time_lag), F, ifelse((diff_per_time_lag >= abs(.1)) , T, F))
-      #          ) %>%
-      #   filter(tag == "new_data") %>%
-      #   dplyr::select(-c(tag,diff_lag, time_lag, diff_per_time_lag))
-      #
-      # final_data
     
     # If there is no interpolated_data, return nothing
     if(is.null(processing_data) | nrow(processing_data) == 0){
