@@ -529,21 +529,6 @@ document_flood_events <- function(time = Sys.time() %>% with_tz(tzone = "UTC"), 
   # correct for drift
   adjusted_wl <- adjust_wl(time = time, processed_data_db = processed_data_db)
   
-  # final_data <- processing_data %>%
-  #   rbind(processed_data %>%
-  #           filter(date >= !!new_data_date_range[1] & date <= !!new_data_date_range[2]) %>%
-  #           collect() %>%
-  #           mutate(tag = "processed_data")) %>%
-  #   mutate(diff_lag = sensor_water_level - lag(sensor_water_level),
-  #          time_lag = time_length(date - lag(date), unit = "minute"),
-  #          diff_per_time_lag = diff_lag/time_lag,
-  #          qa_qc_flag = ifelse(is.na(diff_per_time_lag), F, ifelse((diff_per_time_lag >= abs(.1)) , T, F))
-  #          ) %>%
-  #   filter(tag == "new_data") %>%
-  #   dplyr::select(-c(tag,diff_lag, time_lag, diff_per_time_lag))
-  #
-  # final_data
-  
   dbx::dbxUpsert(conn = con,
                  table = "data_for_display",
                  records = adjusted_wl,
