@@ -138,8 +138,8 @@ isu_atm <- function(id, begin_date, end_date){
   id = as.character(id)
   
   weather_data <- riem::riem_measures(station = id,
-                      date_start = as_date(begin_date),
-                      date_end = as_date(end_date)
+                      date_start = floor_date(begin_date, unit="day"),
+                      date_end = ceiling_date(end_date, unit="day")
                       )
   
   latest_atm_pressure <- weather_data %>%
