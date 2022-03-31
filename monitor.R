@@ -428,9 +428,10 @@ detect_flooding <- function(x){
   
   last_measurement <- latest_measurements %>%
     filter(date == max(date, na.rm=T)) %>%
-    mutate(above_alert_wl = road_water_level_adj >= -1,
+    mutate(above_alert_wl = sensor_water_level_adj >= alert_threshold,
            time_since_measurement = current_time - date,
-           is_flooding = (time_since_measurement > (min_interval + 6 + 6 + 3)) & above_alert_wl)
+           cutoff_time = lubridate::as.period(min_interval) + minutes(6) + minutes(6) + minutes(3),
+           is_flooding = (time_since_measurement > cutoff_time) & above_alert_wl)
   
   return(last_measurement %>%
            ungroup() %>%
@@ -459,14 +460,11 @@ find_flood_events <- function(x, existing_flood_events, flood_cutoff = 0){
     return()
   }
   
-  last_flood_number <- ifelse(nrow(existing_flood_events) > 0, max(existing_flood_events$flood_event, na.rm=T), 0)
-  
-
   flooded_measurements <- x %>%
     filter(road_water_level_adj >= flood_cutoff) %>%
     mutate(min_date = date - minutes(1),
            max_date = date + minutes(1)) %>%
-    dplyr::select(place, sensor_ID, date, road_water_level_adj, road_water_level, drift, voltage, min_date, max_date)
+    dplyr::select(place, sensor_ID, date, road_water_level_adj, road_water_level, voltage, min_date, max_date)
   
 
   start_stop_flood_events <- existing_flood_events %>%
@@ -483,9 +481,11 @@ find_flood_events <- function(x, existing_flood_events, flood_cutoff = 0){
   
   new_flood_events_df <- foreach(i = 1:length(sensors), .combine = "bind_rows") %do% {
     
+    last_flood_number <- ifelse(nrow(existing_flood_events %>% filter(sensor_ID == sensors[i])) > 0, max(existing_flood_events %>% filter(sensor_ID == sensors[i]) %>% pull(flood_event), na.rm=T), 0)
+    
     site_flood_measurements <- flooded_measurements %>%
       filter(sensor_ID == sensors[i]) %>%
-      mutate(flood_event = flood_counter(date, start_number = 0, lag_hrs = 2))
+      mutate(flood_event = flood_counter(date, start_number = last_flood_number, lag_hrs = 2), .before = "date")
     
     grouped_flood_measurements <- site_flood_measurements %>%
       group_by(place, sensor_ID, flood_event) %>%
@@ -510,16 +510,16 @@ find_flood_events <- function(x, existing_flood_events, flood_cutoff = 0){
     
     return(site_flood_measurements %>%
              filter(flood_event %in% new_storm_intervals$flood_event) %>%
-             dplyr::select(-c(min_date, max_date, flood_event)))
+             dplyr::select(-c(min_date, max_date)) %>% 
+             mutate(drift = road_water_level - road_water_level_adj, .before="voltage") %>% 
+             mutate(flood_event_name = paste0(sensor_ID,"_",flood_event))
+    )
     
   }
   
   if(nrow(new_flood_events_df) == 0){
     return(cat("No *NEW* flood events!\n"))
   }
-  
-  new_flood_events_df <- new_flood_events_df %>%
-    mutate(flood_event = flood_counter(date, start_number = last_flood_number, lag_hrs = 2), .before = "date")
   
   return(new_flood_events_df)
 }
@@ -577,13 +577,13 @@ document_flood_events <- function(time = Sys.time() %>% with_tz(tzone = "UTC"), 
     
     if(nrow(flood_events_df) > 0){
       
-      flood_event_name <- unique(flood_events_df$flood_event)
+      flood_event_name <- unique(flood_events_df$flood_event_name)
       
       flood_events_df$pic_link <- "NA"
       
       flood_events_w_pic <- foreach(k = 1:length(flood_event_name), .combine = "bind_rows") %do% {
         selected_flood <- flood_events_df %>%
-          filter(flood_event == flood_event_name[k])
+          filter(flood_event_name == flood_event_name[k])
         
         days_of_flood <- selected_flood %>%
           pull(date) %>%
@@ -593,7 +593,9 @@ document_flood_events <- function(time = Sys.time() %>% with_tz(tzone = "UTC"), 
         folder_info <- suppressMessages(googledrive::drive_get(path = paste0("Images/","CAM_",unique(selected_flood$sensor_ID),"/",days_of_flood,"/"),shared_drive = as_id(Sys.getenv("GOOGLE_SHARED_DRIVE_ID"))))
         
         if(nrow(folder_info) == 0){
-          return(selected_flood)
+          return(selected_flood %>% 
+                   dplyr::select(-c(flood_event_name)) %>% 
+                   mutate(pic_link = NA))
         }
         
         image_list <- foreach(l = 1:nrow(folder_info), .combine = "bind_rows") %do% {
@@ -611,6 +613,7 @@ document_flood_events <- function(time = Sys.time() %>% with_tz(tzone = "UTC"), 
           
           if(nrow(filtered_image_list) == 0){
             return(selected_flood[j,] %>%
+                     dplyr::select(-c(flood_event_name)) %>% 
                      mutate(pic_link = NA))
           }
           
@@ -621,6 +624,7 @@ document_flood_events <- function(time = Sys.time() %>% with_tz(tzone = "UTC"), 
             mutate(pic_link = drive_resource[[1]]$webViewLink)
           
           return(selected_flood[j,] %>%
+                   dplyr::select(-c(flood_event_name)) %>% 
                    mutate(pic_link = filtered_image_list$pic_link))
         }
       }
