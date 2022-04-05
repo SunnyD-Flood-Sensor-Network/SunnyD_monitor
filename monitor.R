@@ -805,7 +805,8 @@ alert_flooding <- function(x, latest_flooding_df, latest_not_flooding_df){
 monitor_function <- function(debug = T) {
   
   new_data <- raw_data %>%
-    filter(processed == F) %>%
+    filter(processed == F,
+           pressure > 800) %>%
     collect() %>% 
     mutate(place = tools::toTitleCase(place),
            sensor_ID = toupper(sensor_ID))
