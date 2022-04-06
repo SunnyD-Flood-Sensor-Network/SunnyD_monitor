@@ -399,8 +399,8 @@ flood_counter <- function(dates, start_number = 0, lag_hrs = 8){
   lagged_time <-  dates - dplyr::lag(dates)
   lead_time <-  dplyr::lead(dates) - dates
   
-  lagged_time <- replace_na(lagged_time, 0)
-  lead_time <- replace_na(lead_time, 0)
+  lagged_time <- replace_na(lagged_time, duration(0))
+  lead_time <- replace_na(lead_time, duration(0))
   
   group_change_vector <- foreach(i = 1:length(dates), .combine = "c") %do% {
     x <- 0
