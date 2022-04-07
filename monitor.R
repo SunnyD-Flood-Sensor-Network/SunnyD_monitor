@@ -396,16 +396,16 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
 
 flood_counter <- function(dates, start_number = 0, lag_hrs = 8){
   
-  lagged_time <-  dates - dplyr::lag(dates)
-  lead_time <-  dplyr::lead(dates) - dates
+  lagged_time <- difftime(dates, dplyr::lag(dates), units = "hours") %>% 
+    replace_na(duration(0))
   
-  lagged_time <- replace_na(lagged_time, duration(0))
-  lead_time <- replace_na(lead_time, duration(0))
+  lead_time <- difftime(dplyr::lead(dates),dates, units = "hours") %>% 
+    replace_na(duration(0))
   
   group_change_vector <- foreach(i = 1:length(dates), .combine = "c") %do% {
     x <- 0
     
-    if(lagged_time[i] > hours(lag_hrs)){
+    if(abs(lagged_time[i]) > hours(lag_hrs)){
       x <- 1
     }
     
@@ -485,7 +485,7 @@ find_flood_events <- function(x, existing_flood_events, flood_cutoff = 0){
     
     site_flood_measurements <- flooded_measurements %>%
       filter(sensor_ID == sensors[i]) %>%
-      mutate(flood_event = flood_counter(date, start_number = last_flood_number, lag_hrs = 2), .before = "date")
+      mutate(flood_event = flood_counter(date, start_number = 0, lag_hrs = 2), .before = "date")
     
     grouped_flood_measurements <- site_flood_measurements %>%
       group_by(place, sensor_ID, flood_event) %>%
@@ -510,6 +510,9 @@ find_flood_events <- function(x, existing_flood_events, flood_cutoff = 0){
     
     return(site_flood_measurements %>%
              filter(flood_event %in% new_storm_intervals$flood_event) %>%
+             group_by(flood_event) %>% 
+             arrange(date) %>% 
+             mutate(flood_event = cur_group_id() + last_flood_number) %>% 
              dplyr::select(-c(min_date, max_date)) %>% 
              mutate(drift = road_water_level - road_water_level_adj, .before="voltage") %>% 
              mutate(flood_event_name = paste0(sensor_ID,"_",flood_event))
