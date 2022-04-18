@@ -431,11 +431,12 @@ detect_flooding <- function(x){
     mutate(above_alert_wl = sensor_water_level_adj >= alert_threshold,
            time_since_measurement = current_time - date,
            cutoff_time = lubridate::as.period(min_interval) + minutes(6) + minutes(6) + minutes(3),
-           is_flooding = (time_since_measurement > cutoff_time) & above_alert_wl)
+           is_flooding = (time_since_measurement > cutoff_time) & above_alert_wl,
+           alert_sent = F)
   
   return(last_measurement %>%
            ungroup() %>%
-           transmute(place, sensor_ID, latest_measurement = date, current_time = current_time, is_flooding)
+           transmute(place, sensor_ID, latest_measurement = date, current_time = current_time, is_flooding, alert_sent)
   )
 }
 
@@ -540,7 +541,7 @@ document_flood_events <- function(time = Sys.time() %>% with_tz(tzone = "UTC"), 
   
   cat("Wrote drift-corrected data!", "\n")
   
-  alert_flooding(x = adjusted_wl, latest_flooding_df = latest_flooding_df, latest_not_flooding_df = latest_not_flooding_df)
+  alert_flooding(x = adjusted_wl)
   
   if(write_to_sheet == F){
     return(cat("Checked for loss of communications!\n"))
@@ -755,13 +756,20 @@ send_new_alert <- function(place){
   cat("Sent new flood alert for: \n", place,"\n")
 }
 
-alert_flooding <- function(x, latest_flooding_df, latest_not_flooding_df){
+alert_flooding <- function(x){
   is_flooding <- detect_flooding(x)
   
   places <- unique(is_flooding$place)
   
+  flood_status_df <- con %>% 
+    tbl("flood_status") %>% 
+    collect()
+  
   for(i in 1:length(places)){
     site_data <- is_flooding %>%
+      filter(place == places[i])
+    
+    flood_status_site <- flood_status_df %>% 
       filter(place == places[i])
     
     any_flooding <- sum(site_data$is_flooding) > 0
@@ -769,36 +777,43 @@ alert_flooding <- function(x, latest_flooding_df, latest_not_flooding_df){
     if(any_flooding){
       
       site_flooding_data <- site_data %>%
-        filter(is_flooding == T) %>%
-        filter(latest_measurement == min(latest_measurement, na.rm=T))
+        filter(is_flooding == T) #%>%
+        # filter(latest_measurement == max(latest_measurement, na.rm=T))
       
-      cat(site_flooding_data)
       
-      latest_flood <- latest_flooding_df %>%
-        filter(place == places[i]) %>%
-        pull(latest_measurement)
-      
-      cat("Latest flood:",latest_flood,"\n")
-      
-      latest_not_flood <- latest_not_flooding_df %>%
-        filter(place == places[i]) %>%
-        pull(latest_measurement)
-      
-      cat("Latest NOT flood:",latest_not_flood,"\n")
-      
-      if((latest_not_flood > latest_flood) & (site_flooding_data %>%
-                                              pull(latest_measurement) > latest_not_flood)){
+      if(flood_status_site %>%
+         filter(alert_sent == T) %>% 
+         nrow() > 0){
         
-        send_new_alert(places[i])
+        site_flooding_data <- site_flooding_data %>% 
+          mutate(alert_sent = T)
+        
+        cat("Flooding, but alert previously sent for: ", places[i],"\n")
+        
+        dbx::dbxUpsert(conn = con, table = "flood_status", records = site_flooding_data, where_cols = c("place","sensor_ID"), skip_existing = F)
       }
       
-      latest_flooding_df <<- dplyr::rows_upsert(latest_flooding_df, site_flooding_data, by = c("place", "sensor_ID"))
+      if(flood_status_site %>%
+         filter(alert_sent == T) %>% 
+         nrow() == 0){
+        
+        send_new_alert(places[i])
+        
+        cat("Sent alert for: ", places[i],"\n")
+        
+        site_flooding_data <- site_flooding_data %>% 
+          mutate(alert_sent = T)
+        
+        dbx::dbxUpsert(conn = con, table = "flood_status", records = site_flooding_data, where_cols = c("place","sensor_ID"), skip_existing = F)
+      }
       
+
     }
     
     if(any_flooding == F){
       
-      latest_not_flooding_df <<- dplyr::rows_upsert(latest_not_flooding_df, site_data %>% slice(1), by = c("place", "sensor_ID"))
+      dbx::dbxUpsert(conn = con, table = "flood_status", records = site_data, where_cols = c("place","sensor_ID"), skip_existing = F)
+      cat("No flood alert sent for: ", places[i],"\n")
       
     }
   }
@@ -911,9 +926,6 @@ flood_tracker = 0
 last_time <- processed_data %>%
   slice_max(order_by = date, n=1) %>%
   pull(date)
-
-latest_flooding_df <- detect_flooding(adjust_wl(processed_data_db = processed_data, time = last_time) %>% group_by(sensor_ID) %>% slice_head(n=5))
-latest_not_flooding_df <- detect_flooding(adjust_wl(processed_data_db = processed_data, time = last_time) %>% group_by(sensor_ID) %>% slice_tail(n=5))
 
 while(run ==T){
   start_time <- Sys.time()
