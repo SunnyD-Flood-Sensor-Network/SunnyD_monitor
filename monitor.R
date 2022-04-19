@@ -730,28 +730,71 @@ chmp_PUT <- function(dc = "us20", path, key, query = list(), body = NULL,
   return(x)
 }
 
-select_campaign_id <- function(place){
-  switch(place,
-         "Beaufort, North Carolina" = Sys.getenv("MAILCHIMP_BFT_ID"),
-         "Carolina Beach, North Carolina" = Sys.getenv("MAILCHIMP_CB_ID"),
-         "New Bern, North Carolina" = NA)
-}
-
 send_new_alert <- function(place){
-  base_campaign <- select_campaign_id(place)
+  list_id <- Sys.getenv("MAILCHIMP_LIST_ID")
+  interest_id <- Sys.getenv("MAILCHIMP_INTEREST_ID")
+  formatted_place <- str_replace(place, pattern = "North Carolina", replacement = "NC")
   
-  if(is.na(base_campaign)){
-    return(cat("No campaign set up for: ",place, " No alert sent! \n"))
+  site_options <- chmp_GET(path=paste0("lists/", list_id,"/interest-categories/",interest_id,"/interests"), 
+                           key = Sys.getenv("MAILCHIMP_KEY")) %>% 
+    fromJSON(flatten=T)
+  
+  site_options_df <- site_options$interests %>% 
+    as.data.frame() %>% 
+    as_tibble()
+  
+  interest_value_df <- site_options_df %>% 
+    filter(name == formatted_place) 
+  
+  if(nrow(interest_value_df) == 0){
+    return("Place is not registered as an option for the listserv")
   }
   
-  copied_campaign <- chmp_POST(path=paste0("campaigns/",base_campaign,"/actions/replicate"), key = Sys.getenv("MAILCHIMP_KEY")) %>%
+  new_campaign <- chmp_POST(path=paste0("campaigns"),
+                            key = Sys.getenv("MAILCHIMP_KEY"),
+                            body = paste0('{"type": "plaintext",
+            "recipients": {"segment_opts": {
+            "match": "all",
+            "conditions":[
+                          {
+                   "condition_type": "Interests",
+                   "field": "interests-',interest_id,'",
+                   "op":  "interestcontains",
+                   "value": ["',interest_value_df$id,'"]
+                          }
+            ]
+            },
+            "list_id": "',list_id,'"
+            },
+            "tracking": {
+            "opens": false,
+            "text_clicks": false
+            },
+            "settings": {
+            "subject_line": "Flood Alert - Sunny Day Flooding Project",
+            "preview_text": "Flood alert for ', formatted_place,'",
+            "title": "', formatted_place,' Flood Alert - ', Sys.time() %>% with_tz(tzone="America/New_York") %>% as_date(),'",
+            "from_name": "Sunny Day Flooding Project"  ,
+            "reply_to": "sunnydayflood@gmail.com",
+            "use_conversation": true,
+            "to_name": "*|FNAME|* *|LNAME|*",
+            "auto_footer": false
+            }
+}
+'
+                            )) %>% 
     jsonlite::fromJSON()
   
-  chmp_PUT(path = paste0("campaigns/",copied_campaign$id,"/content"),
-           key = Sys.getenv("MAILCHIMP_KEY"),
-           body=paste0("{\"plain_text\":\"Flood Alert for ",place,"\\n\\nRoadway flooding estimated at ", format(Sys.time(),"%m/%d/%Y %H:%M%P %Z"),"\\n\\nVisit https://go.unc.edu/flood-data to view live data and pictures of the site.\"}"))
+  new_campaign_id <- new_campaign$id
   
-  chmp_POST(path=paste0("campaigns/",copied_campaign$id,"/actions/send"), key = Sys.getenv("MAILCHIMP_KEY"))
+  chmp_PUT(path = paste0("campaigns/",new_campaign_id,"/content"),
+           key = Sys.getenv("MAILCHIMP_KEY"),
+           body=paste0('{"plain_text":"Flood Alert for ',formatted_place,
+                       '\\n--------------------------------\\n\\nLikely roadway flooding estimated at: ', 
+                       format(Sys.time(),"%m/%d/%Y %H:%M%P %Z"),
+                       '.\\n\\nVisit our data viewer to see live data and pictures of the site:\\nhttps://go.unc.edu/flood-data\\n\\n================================\\nYou are receiving this email because you opted in via our website: https://tarheels.live/sunnydayflood\\n\\nUnsubscribe *|HTML:EMAIL|* from this list: *|UNSUB|*\\n\\nUpdate Profile: *|UPDATE_PROFILE|*\\n\\nOur mailing address is:\\nSunny Day Flooding Project\\n223 E Cameron Ave\\nNew East Building, CB#3140\\nChapel Hill, NC 27599-3140\\nUSA"}'))
+  
+  chmp_POST(path=paste0("campaigns/",new_campaign_id,"/actions/send"), key = Sys.getenv("MAILCHIMP_KEY"))
   
   cat("Sent new flood alert for: \n", place,"\n")
 }
@@ -777,9 +820,7 @@ alert_flooding <- function(x){
     if(any_flooding){
       
       site_flooding_data <- site_data %>%
-        filter(is_flooding == T) #%>%
-        # filter(latest_measurement == max(latest_measurement, na.rm=T))
-      
+        filter(is_flooding == T) 
       
       if(flood_status_site %>%
          filter(alert_sent == T) %>% 
@@ -798,8 +839,6 @@ alert_flooding <- function(x){
          nrow() == 0){
         
         send_new_alert(places[i])
-        
-        cat("Sent alert for: ", places[i],"\n")
         
         site_flooding_data <- site_flooding_data %>% 
           mutate(alert_sent = T)
