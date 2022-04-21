@@ -18,6 +18,7 @@ library(jsonlite)
 library(crul)
 library(MASS)
 library(riem)
+library(xml2)
 
 
 #-------- Description --------------
