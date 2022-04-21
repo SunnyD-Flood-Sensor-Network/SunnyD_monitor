@@ -58,6 +58,8 @@ processed_data <- con %>%
 drift_corrected_data <- con %>%
   tbl("data_for_display")
 
+fiman_gauge_key <- read_csv("fiman_gauge_key.csv")
+
 #------------------------ Functions to retrieve atm pressure -------------------
 
 noaa_atm <- function(id, begin_date, end_date) {
@@ -153,6 +155,49 @@ isu_atm <- function(id, begin_date, end_date){
   return(latest_atm_pressure)
 }
 
+
+fiman_atm <- function(id, begin_date, end_date){
+  station_keys <- fiman_gauge_key %>% 
+    filter(site_id == id) %>% 
+    filter(Sensor == "Barometric Pressure")
+  
+  request <- httr::GET(url = Sys.getenv("FIMAN_URL"),
+                       query = list(
+                         "site_id" = station_keys$site_id,
+                         "data_start" = paste0(format(begin_date - hours(1), "%Y-%m-%d %H:%M:%S")),
+                         "date_end" = paste0(format(end_date + hours(1), "%Y-%m-%d %H:%M:%S")),
+                         "format_datetime"="%Y-%m-%d %H:%M:%S",
+                         "tz" = "UTC",
+                         "show_raw" = T,
+                         "show_quality" = T,
+                         "sensor_id" =  station_keys$sensor_id
+                         
+                       ))
+  
+  content <- request$content %>% 
+    xml2::read_xml() %>% 
+    xml2::as_list() %>% 
+    as_tibble()
+
+  parsed_content <- content$onerain$response %>% 
+    as_tibble() %>% 
+    unnest_wider("general") %>% 
+    unnest(cols = names(.)) %>% 
+    unnest(cols = names(.)) %>% 
+    mutate(data_time = lubridate::ymd_hms(data_time),
+           data_value = as.numeric(data_value))
+  
+  latest_atm_pressure <- parsed_content %>%
+    transmute(
+      id = id,
+      date = data_time,
+      pressure_mb = data_value,
+      notes = "FIMAN"
+    )
+  
+  return(latest_atm_pressure)
+  }
+
 get_atm_pressure <- function(atm_id, atm_src, begin_date, end_date) {
   # Each location will have its own function called within this larger function
   switch(toupper(atm_src),
@@ -164,7 +209,10 @@ get_atm_pressure <- function(atm_id, atm_src, begin_date, end_date) {
                          end_date = end_date),
          "ISU" = isu_atm(id = atm_id,
                          begin_date = begin_date,
-                         end_date = end_date)
+                         end_date = end_date),
+         "FIMAN" = fiman_atm(id = atm_id,
+                             begin_date = begin_date,
+                             end_date = end_date)
   )
   
 }

@@ -22,6 +22,7 @@ RUN install2.r vctrs dplyr dbplyr lubridate RPostgres DBI foreach dbx readr pool
 RUN groupadd -r monitor && useradd --no-log-init -r -g monitor monitor
 
 ADD monitor.R /monitor.R
+ADD fiman_gauge_key.csv /fiman_gauge_key.csv
 
 EXPOSE 5432
 
