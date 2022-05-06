@@ -17,6 +17,8 @@ library(stringr)
 library(jsonlite)
 library(crul)
 library(MASS)
+library(riem)
+library(xml2)
 
 
 #-------- Description --------------
@@ -44,10 +46,6 @@ con <- dbPool(
   user = Sys.getenv("POSTGRESQL_USER")
 )
 
-# Connect to sensor location table
-sensor_locations <- con %>%
-  tbl("sensor_locations")
-
 sensor_surveys <- con %>%
   tbl("sensor_surveys")
 
@@ -61,8 +59,7 @@ processed_data <- con %>%
 drift_corrected_data <- con %>%
   tbl("data_for_display")
 
-drift_corrected_data <- con %>% 
-  tbl("sensor_data_drift_corrected")
+fiman_gauge_key <- read_csv("fiman_gauge_key.csv")
 
 #------------------------ Functions to retrieve atm pressure -------------------
 
@@ -144,8 +141,8 @@ isu_atm <- function(id, begin_date, end_date){
   id = as.character(id)
   
   weather_data <- riem::riem_measures(station = id,
-                      date_start = as_date(begin_date),
-                      date_end = as_date(end_date)
+                      date_start = floor_date(begin_date, unit="day"),
+                      date_end = ceiling_date(end_date, unit="day")
                       )
   
   latest_atm_pressure <- weather_data %>%
@@ -159,6 +156,49 @@ isu_atm <- function(id, begin_date, end_date){
   return(latest_atm_pressure)
 }
 
+
+fiman_atm <- function(id, begin_date, end_date){
+  station_keys <- fiman_gauge_key %>% 
+    filter(site_id == id) %>% 
+    filter(Sensor == "Barometric Pressure")
+  
+  request <- httr::GET(url = Sys.getenv("FIMAN_URL"),
+                       query = list(
+                         "site_id" = station_keys$site_id,
+                         "data_start" = paste0(format(begin_date - hours(1), "%Y-%m-%d %H:%M:%S")),
+                         "date_end" = paste0(format(end_date + hours(1), "%Y-%m-%d %H:%M:%S")),
+                         "format_datetime"="%Y-%m-%d %H:%M:%S",
+                         "tz" = "UTC",
+                         "show_raw" = T,
+                         "show_quality" = T,
+                         "sensor_id" =  station_keys$sensor_id
+                         
+                       ))
+  
+  content <- request$content %>% 
+    xml2::read_xml() %>% 
+    xml2::as_list() %>% 
+    as_tibble()
+
+  parsed_content <- content$onerain$response %>% 
+    as_tibble() %>% 
+    unnest_wider("general") %>% 
+    unnest(cols = names(.)) %>% 
+    unnest(cols = names(.)) %>% 
+    mutate(data_time = lubridate::ymd_hms(data_time),
+           data_value = as.numeric(data_value))
+  
+  latest_atm_pressure <- parsed_content %>%
+    transmute(
+      id = id,
+      date = data_time,
+      pressure_mb = data_value,
+      notes = "FIMAN"
+    )
+  
+  return(latest_atm_pressure)
+  }
+
 get_atm_pressure <- function(atm_id, atm_src, begin_date, end_date) {
   # Each location will have its own function called within this larger function
   switch(toupper(atm_src),
@@ -170,31 +210,34 @@ get_atm_pressure <- function(atm_id, atm_src, begin_date, end_date) {
                          end_date = end_date),
          "ISU" = isu_atm(id = atm_id,
                          begin_date = begin_date,
-                         end_date = end_date)
+                         end_date = end_date),
+         "FIMAN" = fiman_atm(id = atm_id,
+                             begin_date = begin_date,
+                             end_date = end_date)
   )
   
 }
 
-interpolate_atm_data <- function(data){
+interpolate_atm_data <- function(data, debug = T){
   place_names <- unique(data$place)
   
-  interpolated_data <- foreach(i = 1:length(place_names), .combine = "rbind") %do% {
+  interpolated_data <- foreach(i = 1:length(place_names), .combine = "bind_rows") %do% {
     
     selected_place_name <- place_names[i]
     
     # select new data for each place
     data_filtered <- data %>%
-      filter(place == selected_place_name)
+      dplyr::filter(place == selected_place_name)
     
     # extract the date range and duration
     new_data_date_range <- c(min(data_filtered$date, na.rm=T)-minutes(30), max(data_filtered$date, na.rm=T)+minutes(30))
-    new_data_date_duration <- time_length(diff(new_data_date_range), unit = "days")
+    new_data_date_duration <- lubridate::time_length(diff(new_data_date_range), unit = "days")
     
     if(new_data_date_duration >= 30){
       chunks <- ceiling(new_data_date_duration / 30)
-      span <- duration(new_data_date_duration / chunks, units = "days")
+      span <- lubridate::duration(new_data_date_duration / chunks, units = "days")
       
-      atm_tibble <- foreach(j = 1:chunks, .combine = "rbind") %do% {
+      atm_tibble <- foreach(j = 1:chunks, .combine = "bind_rows") %do% {
         range_min <- new_data_date_range[1] + (span * (j - 1))
         range_max <- new_data_date_range[1] + (span * j)
         
@@ -205,7 +248,7 @@ interpolate_atm_data <- function(data){
       }
       
       atm_tibble <- atm_tibble %>%
-        distinct(date, .keep_all=T)
+        dplyr::distinct(date, .keep_all=T)
     }
     
     if(new_data_date_duration < 30){
@@ -225,7 +268,8 @@ interpolate_atm_data <- function(data){
     atm_tibble_bounds_data <- (min(data_filtered$date, na.rm=T) > min(atm_tibble$date, na.rm=T)) & (max(data_filtered$date, na.rm=T) < max(atm_tibble$date, na.rm=T))
     
     interpolated_data_filtered <- data_filtered %>%
-      filter(date > min(atm_tibble$date, na.rm=T) & date < max(atm_tibble$date, na.rm=T)) %>%
+      filter(date > min(atm_tibble$date, na.rm=T)) %>% 
+      filter(date < max(atm_tibble$date, na.rm=T)) %>%
       mutate(pressure_mb = approxfun(atm_tibble$date, atm_tibble$pressure_mb)(date))
     
     if(debug == T) {
@@ -309,14 +353,16 @@ get_smooth_min_wl <- function(measurements){
                                 ifelse(!is.na(deriv), ifelse(deriv != 0, T, F), F)))
     
     z_chng_pts <- z %>%
-      filter(change_pt == T & (min_water_depth >= quantile(min_water_depth, 0.25) & min_water_depth <= quantile(min_water_depth, 0.75)))
+      filter(change_pt == T & (min_water_depth >= quantile(min_water_depth, 0.25) & min_water_depth <= quantile(min_water_depth, 0.75))) %>% 
+      dplyr::select(place, sensor_ID, date, min_water_depth)
     
     if(nrow(z_chng_pts) < 3){
       return(
         z %>%
           left_join(z_chng_pts %>%
-                      mutate(smoothed_min_water_depth = min_water_depth)) %>%
-          tidyr::fill(smoothed_min_water_depth,.direction = "downup")
+                      mutate(smoothed_min_water_depth = min_water_depth),
+                    by = c("place","sensor_ID","date","min_water_depth")) %>%
+          tidyr::fill(smoothed_min_water_depth,.direction = "downup") 
         
       )
     }
@@ -325,8 +371,10 @@ get_smooth_min_wl <- function(measurements){
       return(
         z %>%
           left_join(z_chng_pts %>%
-                      mutate(smoothed_min_water_depth = loess(min_water_depth~as.numeric(date), data = .)$fitted)) %>%
-          tidyr::fill(smoothed_min_water_depth,.direction = "downup")
+                      mutate(smoothed_min_water_depth = loess(min_water_depth~as.numeric(date), data = .)$fitted),
+                    by = c("place","sensor_ID","date","min_water_depth")) %>%
+          tidyr::fill(smoothed_min_water_depth,.direction = "downup") 
+        
       )
     }
     
@@ -345,7 +393,13 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
   
   db_df_collected <- processed_data_db %>%
     filter(date >= min_date_x & date <= max_date_x) %>%
-    collect()
+    collect() %>% 
+    mutate(diff_lag = sensor_water_depth - lag(sensor_water_depth),
+           time_lag = lubridate::time_length(date-lag(date), unit = "minute"),
+           diff_per_time_lag = diff_lag/time_lag,
+           qa_qc_flag = ifelse(is.na(diff_per_time_lag), F, ifelse((diff_per_time_lag >= abs(.1)) , T, F))
+    ) %>% 
+    filter(qa_qc_flag == F)
   
   if(nrow(db_df_collected) == 0){
     return(cat("No processed data over past 2 weeks available to adjust"))
@@ -374,9 +428,8 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
     
   }
   
-  # Left off here, need to calculate water level from smoothed_min_water_depth calc!
   adjusted_df <- db_df_collected %>%
-    left_join(aggregate_smooth_wl) %>%
+    left_join(aggregate_smooth_wl, by = c("place", "sensor_ID", "date", "atm_pressure", "sensor_pressure", "voltage", "sensor_water_depth", "qa_qc_flag", "tag")) %>%
     mutate(sensor_water_level = sensor_elevation + sensor_water_depth,
            road_water_level = sensor_water_level - road_elevation,
            road_water_level_adj = road_water_level - smoothed_min_water_depth,
@@ -392,16 +445,16 @@ adjust_wl <- function(time = Sys.time(), processed_data_db){
 
 flood_counter <- function(dates, start_number = 0, lag_hrs = 8){
   
-  lagged_time <-  dates - dplyr::lag(dates)
-  lead_time <-  dplyr::lead(dates) - dates
+  lagged_time <- difftime(dates, dplyr::lag(dates), units = "hours") %>% 
+    replace_na(duration(0))
   
-  lagged_time <- replace_na(lagged_time, 0)
-  lead_time <- replace_na(lead_time, 0)
+  lead_time <- difftime(dplyr::lead(dates),dates, units = "hours") %>% 
+    replace_na(duration(0))
   
   group_change_vector <- foreach(i = 1:length(dates), .combine = "c") %do% {
     x <- 0
     
-    if(lagged_time[i] > hours(lag_hrs)){
+    if(abs(lagged_time[i]) > hours(lag_hrs)){
       x <- 1
     }
     
@@ -424,13 +477,15 @@ detect_flooding <- function(x){
   
   last_measurement <- latest_measurements %>%
     filter(date == max(date, na.rm=T)) %>%
-    mutate(above_alert_wl = road_water_level_adj >= -1,
+    mutate(above_alert_wl = sensor_water_level_adj >= alert_threshold,
            time_since_measurement = current_time - date,
-           is_flooding = (time_since_measurement > (min_interval + 6 + 6 + 3)) & above_alert_wl)
+           cutoff_time = lubridate::as.period(min_interval) + minutes(6) + minutes(6) + minutes(3),
+           is_flooding = (time_since_measurement > cutoff_time) & above_alert_wl,
+           alert_sent = F)
   
   return(last_measurement %>%
            ungroup() %>%
-           transmute(place, sensor_ID, latest_measurement = date, current_time = current_time, is_flooding)
+           transmute(place, sensor_ID, latest_measurement = date, current_time = current_time, is_flooding, alert_sent)
   )
 }
 
@@ -455,14 +510,11 @@ find_flood_events <- function(x, existing_flood_events, flood_cutoff = 0){
     return()
   }
   
-  last_flood_number <- ifelse(nrow(existing_flood_events) > 0, max(existing_flood_events$flood_event, na.rm=T), 0)
-  
-
   flooded_measurements <- x %>%
     filter(road_water_level_adj >= flood_cutoff) %>%
     mutate(min_date = date - minutes(1),
            max_date = date + minutes(1)) %>%
-    dplyr::select(place, sensor_ID, date, road_water_level_adj, road_water_level, drift, voltage, min_date, max_date)
+    dplyr::select(place, sensor_ID, date, road_water_level_adj, road_water_level, voltage, min_date, max_date)
   
 
   start_stop_flood_events <- existing_flood_events %>%
@@ -479,9 +531,11 @@ find_flood_events <- function(x, existing_flood_events, flood_cutoff = 0){
   
   new_flood_events_df <- foreach(i = 1:length(sensors), .combine = "bind_rows") %do% {
     
+    last_flood_number <- ifelse(nrow(existing_flood_events %>% filter(sensor_ID == sensors[i])) > 0, max(existing_flood_events %>% filter(sensor_ID == sensors[i]) %>% pull(flood_event), na.rm=T), 0)
+    
     site_flood_measurements <- flooded_measurements %>%
       filter(sensor_ID == sensors[i]) %>%
-      mutate(flood_event = flood_counter(date, start_number = 0, lag_hrs = 2))
+      mutate(flood_event = flood_counter(date, start_number = 0, lag_hrs = 2), .before = "date")
     
     grouped_flood_measurements <- site_flood_measurements %>%
       group_by(place, sensor_ID, flood_event) %>%
@@ -506,7 +560,13 @@ find_flood_events <- function(x, existing_flood_events, flood_cutoff = 0){
     
     return(site_flood_measurements %>%
              filter(flood_event %in% new_storm_intervals$flood_event) %>%
-             dplyr::select(-c(min_date, max_date, flood_event)))
+             group_by(flood_event) %>% 
+             arrange(date) %>% 
+             mutate(flood_event = cur_group_id() + last_flood_number) %>% 
+             dplyr::select(-c(min_date, max_date)) %>% 
+             mutate(drift = road_water_level - road_water_level_adj, .before="voltage") %>% 
+             mutate(flood_event_name = paste0(sensor_ID,"_",flood_event))
+    )
     
   }
   
@@ -514,17 +574,13 @@ find_flood_events <- function(x, existing_flood_events, flood_cutoff = 0){
     return(cat("No *NEW* flood events!\n"))
   }
   
-  new_flood_events_df <- new_flood_events_df %>%
-    mutate(flood_event = flood_counter(date, start_number = last_flood_number, lag_hrs = 2), .before = "date")
-  
   return(new_flood_events_df)
 }
 
 
 document_flood_events <- function(time = Sys.time() %>% with_tz(tzone = "UTC"), processed_data_db, write_to_sheet){
   # correct for drift
-  adjusted_wl <- adjust_wl(time = time, processed_data_db = processed_data_db %>%
-                             filter(qa_qc_flag == F))
+  adjusted_wl <- adjust_wl(time = time, processed_data_db = processed_data_db)
   
   dbx::dbxUpsert(conn = con,
                  table = "data_for_display",
@@ -534,7 +590,7 @@ document_flood_events <- function(time = Sys.time() %>% with_tz(tzone = "UTC"), 
   
   cat("Wrote drift-corrected data!", "\n")
   
-  alert_flooding(x = adjusted_wl, latest_flooding_df = latest_flooding_df, latest_not_flooding_df = latest_not_flooding_df)
+  alert_flooding(x = adjusted_wl)
   
   if(write_to_sheet == F){
     return(cat("Checked for loss of communications!\n"))
@@ -574,13 +630,13 @@ document_flood_events <- function(time = Sys.time() %>% with_tz(tzone = "UTC"), 
     
     if(nrow(flood_events_df) > 0){
       
-      flood_event_name <- unique(flood_events_df$flood_event)
+      flood_event_name <- unique(flood_events_df$flood_event_name)
       
       flood_events_df$pic_link <- "NA"
       
       flood_events_w_pic <- foreach(k = 1:length(flood_event_name), .combine = "bind_rows") %do% {
         selected_flood <- flood_events_df %>%
-          filter(flood_event == flood_event_name[k])
+          filter(flood_event_name == flood_event_name[k])
         
         days_of_flood <- selected_flood %>%
           pull(date) %>%
@@ -590,7 +646,9 @@ document_flood_events <- function(time = Sys.time() %>% with_tz(tzone = "UTC"), 
         folder_info <- suppressMessages(googledrive::drive_get(path = paste0("Images/","CAM_",unique(selected_flood$sensor_ID),"/",days_of_flood,"/"),shared_drive = as_id(Sys.getenv("GOOGLE_SHARED_DRIVE_ID"))))
         
         if(nrow(folder_info) == 0){
-          return(selected_flood)
+          return(selected_flood %>% 
+                   dplyr::select(-c(flood_event_name)) %>% 
+                   mutate(pic_link = NA))
         }
         
         image_list <- foreach(l = 1:nrow(folder_info), .combine = "bind_rows") %do% {
@@ -608,6 +666,7 @@ document_flood_events <- function(time = Sys.time() %>% with_tz(tzone = "UTC"), 
           
           if(nrow(filtered_image_list) == 0){
             return(selected_flood[j,] %>%
+                     dplyr::select(-c(flood_event_name)) %>% 
                      mutate(pic_link = NA))
           }
           
@@ -618,6 +677,7 @@ document_flood_events <- function(time = Sys.time() %>% with_tz(tzone = "UTC"), 
             mutate(pic_link = drive_resource[[1]]$webViewLink)
           
           return(selected_flood[j,] %>%
+                   dplyr::select(-c(flood_event_name)) %>% 
                    mutate(pic_link = filtered_image_list$pic_link))
         }
       }
@@ -719,39 +779,89 @@ chmp_PUT <- function(dc = "us20", path, key, query = list(), body = NULL,
   return(x)
 }
 
-select_campaign_id <- function(place){
-  switch(place,
-         "Beaufort, North Carolina" = Sys.getenv("MAILCHIMP_BFT_ID"),
-         "Carolina Beach, North Carolina" = Sys.getenv("MAILCHIMP_CB_ID"),
-         "New Bern, North Carolina" = NA)
-}
-
 send_new_alert <- function(place){
-  base_campaign <- select_campaign_id(place)
+  list_id <- Sys.getenv("MAILCHIMP_LIST_ID")
+  interest_id <- Sys.getenv("MAILCHIMP_INTEREST_ID")
+  formatted_place <- str_replace(place, pattern = "North Carolina", replacement = "NC")
   
-  if(is.na(base_campaign)){
-    return(cat("No campaign set up for: ",place, " No alert sent! \n"))
+  site_options <- chmp_GET(path=paste0("lists/", list_id,"/interest-categories/",interest_id,"/interests"), 
+                           key = Sys.getenv("MAILCHIMP_KEY")) %>% 
+    fromJSON(flatten=T)
+  
+  site_options_df <- site_options$interests %>% 
+    as.data.frame() %>% 
+    as_tibble()
+  
+  interest_value_df <- site_options_df %>% 
+    filter(name == formatted_place) 
+  
+  if(nrow(interest_value_df) == 0){
+    return("Place is not registered as an option for the listserv")
   }
   
-  copied_campaign <- chmp_POST(path=paste0("campaigns/",base_campaign,"/actions/replicate"), key = Sys.getenv("MAILCHIMP_KEY")) %>%
+  new_campaign <- chmp_POST(path=paste0("campaigns"),
+                            key = Sys.getenv("MAILCHIMP_KEY"),
+                            body = paste0('{"type": "plaintext",
+            "recipients": {"segment_opts": {
+            "match": "all",
+            "conditions":[
+                          {
+                   "condition_type": "Interests",
+                   "field": "interests-',interest_id,'",
+                   "op":  "interestcontains",
+                   "value": ["',interest_value_df$id,'"]
+                          }
+            ]
+            },
+            "list_id": "',list_id,'"
+            },
+            "tracking": {
+            "opens": false,
+            "text_clicks": false
+            },
+            "settings": {
+            "subject_line": "Flood Alert - Sunny Day Flooding Project",
+            "preview_text": "Flood alert for ', formatted_place,'",
+            "title": "', formatted_place,' Flood Alert - ', Sys.time() %>% with_tz(tzone="America/New_York") %>% as_date(),'",
+            "from_name": "Sunny Day Flooding Project"  ,
+            "reply_to": "sunnydayflood@gmail.com",
+            "use_conversation": true,
+            "to_name": "*|FNAME|* *|LNAME|*",
+            "auto_footer": false
+            }
+}
+'
+                            )) %>% 
     jsonlite::fromJSON()
   
-  chmp_PUT(path = paste0("campaigns/",copied_campaign$id,"/content"),
-           key = Sys.getenv("MAILCHIMP_KEY"),
-           body=paste0("{\"plain_text\":\"Flood Alert for ",place,"\\n\\nRoadway flooding estimated at ", format(Sys.time(),"%m/%d/%Y %H:%M%P %Z"),"\\n\\nVisit https://go.unc.edu/flood-data to view live data and pictures of the site.\"}"))
+  new_campaign_id <- new_campaign$id
   
-  chmp_POST(path=paste0("campaigns/",copied_campaign$id,"/actions/send"), key = Sys.getenv("MAILCHIMP_KEY"))
+  chmp_PUT(path = paste0("campaigns/",new_campaign_id,"/content"),
+           key = Sys.getenv("MAILCHIMP_KEY"),
+           body=paste0('{"plain_text":"Flood Alert for ',formatted_place,
+                       '\\n--------------------------------\\n\\nLikely roadway flooding estimated at: ', 
+                       format(Sys.time(),"%m/%d/%Y %H:%M%P %Z"),
+                       '.\\n\\nVisit our data viewer to see live data and pictures of the site:\\nhttps://go.unc.edu/flood-data\\n\\n================================\\nYou are receiving this email because you opted in via our website: https://tarheels.live/sunnydayflood\\n\\nUnsubscribe *|HTML:EMAIL|* from this list: *|UNSUB|*\\n\\nUpdate Profile: *|UPDATE_PROFILE|*\\n\\nOur mailing address is:\\nSunny Day Flooding Project\\n223 E Cameron Ave\\nNew East Building, CB#3140\\nChapel Hill, NC 27599-3140\\nUSA"}'))
+  
+  chmp_POST(path=paste0("campaigns/",new_campaign_id,"/actions/send"), key = Sys.getenv("MAILCHIMP_KEY"))
   
   cat("Sent new flood alert for: \n", place,"\n")
 }
 
-alert_flooding <- function(x, latest_flooding_df, latest_not_flooding_df){
+alert_flooding <- function(x){
   is_flooding <- detect_flooding(x)
   
   places <- unique(is_flooding$place)
   
+  flood_status_df <- con %>% 
+    tbl("flood_status") %>% 
+    collect()
+  
   for(i in 1:length(places)){
     site_data <- is_flooding %>%
+      filter(place == places[i])
+    
+    flood_status_site <- flood_status_df %>% 
       filter(place == places[i])
     
     any_flooding <- sum(site_data$is_flooding) > 0
@@ -759,30 +869,39 @@ alert_flooding <- function(x, latest_flooding_df, latest_not_flooding_df){
     if(any_flooding){
       
       site_flooding_data <- site_data %>%
-        filter(is_flooding == T) %>%
-        filter(latest_measurement == min(latest_measurement, na.rm=T))
+        filter(is_flooding == T) 
       
-      latest_flood <- latest_flooding_df %>%
-        filter(place == places[i]) %>%
-        pull(latest_measurement)
-      
-      latest_not_flood <- latest_not_flooding_df %>%
-        filter(place == places[i]) %>%
-        pull(latest_measurement)
-      
-      if((latest_not_flood > latest_flood) & (site_flooding_data %>%
-                                              pull(latest_measurement) > latest_not_flood)){
+      if(flood_status_site %>%
+         filter(alert_sent == T) %>% 
+         nrow() > 0){
         
-        send_new_alert(places[i])
+        site_flooding_data <- site_flooding_data %>% 
+          mutate(alert_sent = T)
+        
+        cat("Flooding, but alert previously sent for: ", places[i],"\n")
+        
+        dbx::dbxUpsert(conn = con, table = "flood_status", records = site_flooding_data, where_cols = c("place","sensor_ID"), skip_existing = F)
       }
       
-      latest_flooding_df <<- dplyr::rows_upsert(latest_flooding_df, site_flooding_data, by = c("place", "sensor_ID"))
+      if(flood_status_site %>%
+         filter(alert_sent == T) %>% 
+         nrow() == 0){
+        
+        send_new_alert(places[i])
+        
+        site_flooding_data <- site_flooding_data %>% 
+          mutate(alert_sent = T)
+        
+        dbx::dbxUpsert(conn = con, table = "flood_status", records = site_flooding_data, where_cols = c("place","sensor_ID"), skip_existing = F)
+      }
       
+
     }
     
     if(any_flooding == F){
       
-      latest_not_flooding_df <<- dplyr::rows_upsert(latest_not_flooding_df, site_data %>% slice(1), by = c("place", "sensor_ID"))
+      dbx::dbxUpsert(conn = con, table = "flood_status", records = site_data, where_cols = c("place","sensor_ID"), skip_existing = F)
+      cat("No flood alert sent for: ", places[i],"\n")
       
     }
   }
@@ -792,8 +911,11 @@ alert_flooding <- function(x, latest_flooding_df, latest_not_flooding_df){
 monitor_function <- function(debug = T) {
   
   new_data <- raw_data %>%
-    filter(processed == F) %>%
-    collect()
+    filter(processed == F,
+           pressure > 800) %>%
+    collect() %>% 
+    mutate(place = tools::toTitleCase(place),
+           sensor_ID = toupper(sensor_ID))
   
   if(nrow(new_data) == 0){
     if (debug == T) {
@@ -824,7 +946,7 @@ monitor_function <- function(debug = T) {
       dplyr::select(-c("notes.x", "notes.y"))
     
     
-    interpolated_data <- interpolate_atm_data(data = pre_interpolated_data)
+    interpolated_data <- interpolate_atm_data(data = pre_interpolated_data, debug = debug)
     
     processing_data <- interpolated_data %>%
       transmute(
@@ -845,21 +967,6 @@ monitor_function <- function(debug = T) {
         tag = "new_data"
       )
     
-      # # Removes any erroneous jumps in pressure - This can be moved to the drift-correction code
-      # final_data <- processing_data %>%
-      #   rbind(processed_data %>%
-      #           filter(date >= !!new_data_date_range[1] & date <= !!new_data_date_range[2]) %>%
-      #           collect() %>%
-      #           mutate(tag = "processed_data")) %>%
-      #   mutate(diff_lag = sensor_water_level - lag(sensor_water_level),
-      #          time_lag = time_length(date - lag(date), unit = "minute"),
-      #          diff_per_time_lag = diff_lag/time_lag,
-      #          qa_qc_flag = ifelse(is.na(diff_per_time_lag), F, ifelse((diff_per_time_lag >= abs(.1)) , T, F))
-      #          ) %>%
-      #   filter(tag == "new_data") %>%
-      #   dplyr::select(-c(tag,diff_lag, time_lag, diff_per_time_lag))
-      #
-      # final_data
     
     # If there is no interpolated_data, return nothing
     if(is.null(processing_data) | nrow(processing_data) == 0){
@@ -884,36 +991,9 @@ monitor_function <- function(debug = T) {
       where_cols = c("place", "sensor_ID", "date")
       )
     
-    if(!is.null(interpolated_data)){
-      if(nrow(interpolated_data) == 0){
-        cat("Only one atmospheric pressure value for Beaufort, North Carolina - cannot interpolate! \n")
-        return(cat("No data to write \n"))
-      }
-      
-      if(nrow(interpolated_data) > 0){
-        dbx::dbxUpsert(
-          conn = con,
-          table = "sensor_data_processed",
-          records = interpolated_data,
-          where_cols = c("place", "sensor_ID", "date"),
-          skip_existing = F
-        )
-        
-        dbx::dbxUpdate(conn = con,
-                       table="sensor_data",
-                       records = new_data %>% 
-                         semi_join(interpolated_data, by = c("place","sensor_ID","date")) %>% 
-                         mutate(processed = T),
-                       where_cols = c("sensor_ID", "date")
-        )
-        
-        if (debug == T) {
-          cat("- Wrote to database!", "\n")
-        }
-      }
+    if (debug == T) {
+      cat("- Wrote to database!", "\n")
     }
-    
-    
   }
 }
 
@@ -934,9 +1014,6 @@ flood_tracker = 0
 last_time <- processed_data %>%
   slice_max(order_by = date, n=1) %>%
   pull(date)
-
-latest_flooding_df <- detect_flooding(adjust_wl(processed_data_db = processed_data, time = last_time) %>% group_by(sensor_ID) %>% slice_head(n=5))
-latest_not_flooding_df <- detect_flooding(adjust_wl(processed_data_db = processed_data, time = last_time) %>% group_by(sensor_ID) %>% slice_tail(n=5))
 
 while(run ==T){
   start_time <- Sys.time()
@@ -964,6 +1041,6 @@ while(run ==T){
   # Wait to make the delay 6 minutes
   delay <- difftime(Sys.time(),start_time, units = "secs")
   
-  Sys.sleep((60*2) - delay)
+  Sys.sleep((60*6) - delay)
 }
 
