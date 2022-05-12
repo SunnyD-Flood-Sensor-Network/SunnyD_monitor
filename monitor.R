@@ -839,9 +839,9 @@ send_new_alert <- function(place){
   chmp_PUT(path = paste0("campaigns/",new_campaign_id,"/content"),
            key = Sys.getenv("MAILCHIMP_KEY"),
            body=paste0('{"plain_text":"Flood Alert for ',formatted_place,
-                       '\\n--------------------------------\\n\\nLikely roadway flooding estimated at: ', 
-                       format(Sys.time(),"%m/%d/%Y %H:%M%P %Z"),
-                       '.\\n\\nVisit our data viewer to see live data and pictures of the site:\\nhttps://go.unc.edu/flood-data\\n\\n================================\\nYou are receiving this email because you opted in via our website: https://tarheels.live/sunnydayflood\\n\\nUnsubscribe *|HTML:EMAIL|* from this list: *|UNSUB|*\\n\\nUpdate Profile: *|UPDATE_PROFILE|*\\n\\nOur mailing address is:\\nSunny Day Flooding Project\\n223 E Cameron Ave\\nNew East Building, CB#3140\\nChapel Hill, NC 27599-3140\\nUSA"}'))
+                       '\\n--------------------------------\\n\\nWater estimated on/near roadway at: ', 
+                       format(Sys.time() %>% with_tz(tzone="America/New_York"),"%m/%d/%Y %H:%M%P %Z"),
+                       '.\\n\\nVisit our data viewer to see live data and pictures of the site:\\nhttps://go.unc.edu/flood-data\\n\\nThis alert is informed by preliminary data and is for INFORMATIONAL PURPOSES ONLY. Please refer to your local National Weather Service station for actionable flooding info: https://water.weather.gov/ahps/region.php?state=nc  \\n\\n================================\\nYou are receiving this email because you opted in via our website: https://tarheels.live/sunnydayflood\\n\\nUnsubscribe *|HTML:EMAIL|* from this list: *|UNSUB|*\\n\\nUpdate Profile: *|UPDATE_PROFILE|*\\n\\nOur mailing address is:\\nSunny Day Flooding Project\\n223 E Cameron Ave\\nNew East Building, CB#3140\\nChapel Hill, NC 27599-3140\\nUSA"}'))
   
   chmp_POST(path=paste0("campaigns/",new_campaign_id,"/actions/send"), key = Sys.getenv("MAILCHIMP_KEY"))
   
@@ -982,13 +982,14 @@ monitor_function <- function(debug = T) {
       skip_existing = F
     )
     
-    dbx::dbxUpdate(
+    dbx::dbxUpsert(
       conn = con,
       table="sensor_data",
       records = new_data %>%
         semi_join(processing_data, by = c("place","sensor_ID","date")) %>%
         mutate(processed = T),
-      where_cols = c("place", "sensor_ID", "date")
+      where_cols = c("place", "sensor_ID", "date"),
+      skip_existing = F
       )
     
     if (debug == T) {
