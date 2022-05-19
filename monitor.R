@@ -299,11 +299,17 @@ match_measurements_to_survey <- function(measurements, survey_data){
     site_survey_data <- survey_data %>% 
       filter(sensor_ID == selected_site)
     
+    if(nrow(site_survey_data)==0){
+      warning(paste0("There are no survey data for: ",selected_site,". Please add survey data using the `write_survey` API endpoint"))
+      
+      return()
+    }
+    
     survey_dates <- unique(site_survey_data$date_surveyed) %>% sort(decreasing = F)
     number_of_surveys <- length(survey_dates)
     
     if(min(measurements$date, na.rm=T) < min(survey_dates)){
-      warning("There are data that precede the survey dates!")
+      warning(paste0("There are data that precede the survey dates for: ",selected_site))
     }
     
     if(number_of_surveys == 1){
