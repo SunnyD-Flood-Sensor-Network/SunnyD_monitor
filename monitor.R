@@ -588,15 +588,12 @@ document_flood_events <- function(time = Sys.time() %>% with_tz(tzone = "UTC"), 
   # correct for drift
   adjusted_wl <- adjust_wl(time = time, processed_data_db = processed_data_db)
   
-  number_of_groups <- ceiling(nrow(adjusted_wl) / 2000)
-  
-  for (i in 1:number_of_groups){
     dbx::dbxUpsert(conn = con,
                    table = "data_for_display",
-                   records = adjusted_wl %>% slice((((i-1)*2000)+1):(i*2000)),
-                   where_cols = c("place","sensor_ID","date")
+                   records = adjusted_wl,
+                   where_cols = c("place","sensor_ID","date"),
+                   batch_size = 2000
     )
-  }
   
   cat("Wrote drift-corrected data!", "\n")
   
