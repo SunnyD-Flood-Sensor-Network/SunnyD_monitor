@@ -1,4 +1,7 @@
 # SunnyD_monitor
+
+**This repo is archived. Please see the replacement repos, [sdfp-processing](https://github.com/sunny-day-flooding-project/sdfp-processing) and [sdfp-drift](https://github.com/sunny-day-flooding-project/sdfp-drift)**
+
 Code to process real-time data using R with Docker.
 
 Every **6** minutes, this loop:
